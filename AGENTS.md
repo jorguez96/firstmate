@@ -264,6 +264,8 @@ When the captain invokes `/stow`, load the `stow` skill for its memory curation,
 
 ## 7. Task lifecycle
 
+When the captain invokes `/overnight`, asks for an overnight run, requests an unattended implementation session, or says "work the tickets overnight", load the `overnight` skill; it owns the serialized ticket loop and quota pause/resume gate while the lifecycle owners remain authoritative.
+
 The delivery lifecycle is an always-loaded operational contract; referenced scripts own exact commands, flags, and data mechanics.
 
 ### Intake and authority
