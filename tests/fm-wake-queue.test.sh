@@ -1193,6 +1193,8 @@ test_live_presentation_holder_is_deadlined_without_weakening_ack() {
     "$queue_out" || true)
   [ "$advisory_count" -eq 1 ] \
     || { kill "$queue_holder" 2>/dev/null || true; fail "queue deadline did not emit exactly one holder advisory"; }
+  [ ! -s "$queue_err" ] \
+    || { kill "$queue_holder" 2>/dev/null || true; fail "queue deadline leaked helper-process diagnostics"; }
   if grep "$(printf '\tsignal\t')" "$queue_out" >/dev/null \
     || grep -F 'WAKE_ACK_REQUIRED:' "$queue_err" >/dev/null; then
     kill "$queue_holder" 2>/dev/null || true
@@ -1231,6 +1233,10 @@ test_live_presentation_holder_is_deadlined_without_weakening_ack() {
     "$first_out" || true)
   [ "$advisory_count" -eq 1 ] \
     || { kill "$presentation_holder" 2>/dev/null || true; fail "presentation deadline did not emit exactly one holder advisory"; }
+  if grep -v '^WAKE_ACK_REQUIRED:' "$first_err" | grep . >/dev/null; then
+    kill "$presentation_holder" 2>/dev/null || true
+    fail "presentation deadline leaked helper-process diagnostics"
+  fi
   grep "$(printf '\tsignal\t')" "$first_out" >/dev/null \
     || { kill "$presentation_holder" 2>/dev/null || true; fail "bounded presentation dropped the durable wake row"; }
   if grep -F 'task.status: needs-decision [key=fixture]' "$first_out" >/dev/null; then

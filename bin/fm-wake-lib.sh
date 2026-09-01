@@ -957,7 +957,8 @@ fm_lock_acquire_wait_bounded() {
     "FM_ROOT_OVERRIDE=$FM_ROOT" \
     "FM_LOCK_STALE_AFTER=$FM_LOCK_STALE_AFTER" \
     bash -c '. "$1"; _fm_lock_acquire_wait_handoff "$2" "$3"' \
-      _ "$FM_WAKE_LIB_DIR/fm-wake-lib.sh" "$lockdir" "$caller_pid"; then
+      _ "$FM_WAKE_LIB_DIR/fm-wake-lib.sh" "$lockdir" "$caller_pid" \
+      </dev/null >/dev/null 2>&1; then
     rc=0
   else
     rc=$?
