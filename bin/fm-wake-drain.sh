@@ -6,6 +6,8 @@
 #
 # Keep sequence-bound row consumption independent from generation-bound episode
 # retirement; docs/watcher-continuity.md owns the recovery contract.
+# FM_STATUS_PRESENTATION_LOCK_TIMEOUT sets the positive whole-second wait for
+# the presentation-only lock (default 10); queue mutation locks remain blocking.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -362,7 +364,20 @@ print_status_sections() {
 
 print_status_presentation() {  # [<deduped-raw-rows>]
   local rows=${1:-} lock="$STATE/.status-presentation-lock" snapshot annotation_manifest fully_presented='' rc=0
-  fm_lock_acquire_wait "$lock" || return 1
+  local lock_timeout lock_rc holder_pid
+  lock_timeout=${FM_STATUS_PRESENTATION_LOCK_TIMEOUT:-10}
+  case "$lock_timeout" in ''|*[!0-9]*|0) lock_timeout=10 ;; esac
+  if fm_lock_acquire_wait_bounded "$lock" "$lock_timeout"; then
+    :
+  else
+    lock_rc=$?
+    if [ "$lock_rc" -eq 124 ]; then
+      holder_pid=${FM_LOCK_HELD_PID:-unknown}
+      printf 'STATUS PRESENTATION SKIPPED: lock remains held by live pid %s after %ss; retry on the next drain.\n' \
+        "$holder_pid" "$lock_timeout"
+    fi
+    return 1
+  fi
   snapshot=$(status_presentation_snapshot "$STATE") || {
     printf 'STATUS PRESENTATION INCOMPLETE: status snapshot could not be read.\n'
     rc=1

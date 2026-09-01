@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/fm-wake-queue.test.sh - wake-queue losslessness (the queue safety matrix):
-# concurrent append/drain, bounded structural enrichment, interruption safety,
-# signal catch-up while no watcher runs, stale/check enqueue-before-suppressor
+# concurrent append/drain, bounded structural enrichment and presentation-lock
+# waits, interruption safety, signal catch-up while no watcher runs, stale/check enqueue-before-suppressor
 # ordering, atomic double-drain, duplicate collapse, and liveness assertion.
 # Nothing is lost and nothing is double-consumed. General watcher/lock liveness
 # lives in fm-watcher-lock.test.sh; daemon classification/injection in
@@ -1144,6 +1144,106 @@ test_self_held_lock_reclaims_instead_of_deadlocking() {
   pass "an abandoned same-process lock hold is reclaimed; a parent's live hold is not"
 }
 
+# A live-but-stuck status presenter must not strand the executable drain. The
+# presentation remains retriable on the next pass, while the separate queue
+# mutation lock keeps its blocking all-or-nothing acknowledgement contract.
+test_live_presentation_holder_is_deadlined_without_weakening_ack() {
+  local dir state status first_out first_err second_out second_err replay_out replay_err
+  local presentation_holder ack_holder i start elapsed rc advisory_count
+  dir=$(make_case presentation-lock-deadline)
+  state="$dir/state"
+  status="$state/task.status"
+  first_out="$dir/first.out"
+  first_err="$dir/first.err"
+  second_out="$dir/second.out"
+  second_err="$dir/second.err"
+  replay_out="$dir/replay.out"
+  replay_err="$dir/replay.err"
+
+  printf 'needs-decision [key=fixture]: presentation remains retriable\n' > "$status"
+  append_wake "$state" signal task.status "signal: $status" \
+    || fail "could not seed the presentation-deadline wake"
+
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_acquire_wait "$2"
+    printf "ready\n" > "$3"
+    exec sleep 30
+  ' _ "$ROOT/bin/fm-wake-lib.sh" "$state/.status-presentation-lock" "$dir/presentation.ready" &
+  presentation_holder=$!
+  i=0
+  while [ "$i" -lt 100 ] && [ ! -s "$dir/presentation.ready" ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  [ -s "$dir/presentation.ready" ] \
+    || { kill "$presentation_holder" 2>/dev/null || true; fail "presentation holder never acquired its lock"; }
+
+  start=$(date +%s)
+  FM_STATE_OVERRIDE="$state" FM_STATUS_PRESENTATION_LOCK_TIMEOUT=1 \
+    "$DRAIN" > "$first_out" 2> "$first_err" \
+    || { kill "$presentation_holder" 2>/dev/null || true; fail "bounded presentation drain failed"; }
+  elapsed=$(( $(date +%s) - start ))
+  [ "$elapsed" -le 2 ] \
+    || { kill "$presentation_holder" 2>/dev/null || true; fail "presentation lock delayed the drain for ${elapsed}s"; }
+  advisory_count=$(grep -Fc \
+    "STATUS PRESENTATION SKIPPED: lock remains held by live pid $presentation_holder" \
+    "$first_out" || true)
+  [ "$advisory_count" -eq 1 ] \
+    || { kill "$presentation_holder" 2>/dev/null || true; fail "presentation deadline did not emit exactly one holder advisory"; }
+  grep "$(printf '\tsignal\t')" "$first_out" >/dev/null \
+    || { kill "$presentation_holder" 2>/dev/null || true; fail "bounded presentation dropped the durable wake row"; }
+  if grep -F 'task.status: needs-decision [key=fixture]' "$first_out" >/dev/null; then
+    kill "$presentation_holder" 2>/dev/null || true
+    fail "contended presentation emitted status content without its cursor lock"
+  fi
+
+  kill "$presentation_holder" 2>/dev/null || true
+  wait "$presentation_holder" 2>/dev/null || true
+  FM_STATE_OVERRIDE="$state" FM_STATUS_PRESENTATION_LOCK_TIMEOUT=1 \
+    "$DRAIN" > "$second_out" 2> "$second_err" || fail "presentation retry failed"
+  grep -F 'task.status: needs-decision [key=fixture]: presentation remains retriable' "$second_out" >/dev/null \
+    || fail "the next presentation pass did not surface the skipped status"
+
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_acquire_wait "$2"
+    printf "ready\n" > "$3"
+    exec sleep 30
+  ' _ "$ROOT/bin/fm-wake-lib.sh" "$state/.wake-queue.lock" "$dir/ack.ready" &
+  ack_holder=$!
+  i=0
+  while [ "$i" -lt 100 ] && [ ! -s "$dir/ack.ready" ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  [ -s "$dir/ack.ready" ] \
+    || { kill "$ack_holder" 2>/dev/null || true; fail "acknowledgement holder never acquired the queue lock"; }
+
+  rc=0
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    shift
+    fm_run_timed 1 "$@"
+  ' _ "$ROOT/bin/fm-timeout-lib.sh" "$DRAIN" \
+    --ack-through "$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation [A-Za-z0-9._-][A-Za-z0-9._-]*$/\1/p' "$second_err")" \
+    --recovery-generation "$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through [0-9][0-9]* --recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' "$second_err")" \
+    > "$dir/ack-held.out" 2> "$dir/ack-held.err" || rc=$?
+  [ "$rc" -eq 124 ] \
+    || { kill "$ack_holder" 2>/dev/null || true; fail "held acknowledgement lock did not retain blocking semantics (rc=$rc)"; }
+
+  kill "$ack_holder" 2>/dev/null || true
+  wait "$ack_holder" 2>/dev/null || true
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$replay_out" 2> "$replay_err" \
+    || fail "drain after the interrupted acknowledgement failed"
+  grep "$(printf '\tsignal\t')" "$replay_out" >/dev/null \
+    || fail "the held acknowledgement lock allowed a partial consume"
+  ack_drain_err "$state" "$replay_err" \
+    || fail "the intact wake could not be acknowledged after contention cleared"
+  [ ! -s "$state/.wake-queue" ] || fail "acknowledged presentation fixture remained queued"
+  pass "presentation lock waits are bounded and retriable without weakening acknowledgement atomicity"
+}
+
 # Drain-time historical annotation staleness: a turn-ended-only wake row must
 # not present an already-announced status line as a new update, while a status
 # file with unannounced bytes keeps its annotation and a direct status row is
@@ -1194,6 +1294,7 @@ test_historical_annotation_skips_announced_status() {
 }
 
 test_self_held_lock_reclaims_instead_of_deadlocking
+test_live_presentation_holder_is_deadlined_without_weakening_ack
 test_secondmate_foreign_queue_stall_is_one_shot_and_read_only
 test_secondmate_stall_marker_rejects_symlink
 test_acknowledged_stall_publication_survives_pre_marker_crash
