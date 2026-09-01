@@ -986,6 +986,7 @@ fm_lock_acquire_wait_bounded() {
         fi
         ;;
     esac
+    # shellcheck disable=SC2034 # Output read by callers after bounded acquisition.
     FM_LOCK_HELD_PID=
     return 1
   fi
