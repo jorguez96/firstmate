@@ -1487,8 +1487,31 @@ model_flag_for_harness() {
   esac
 }
 
+# codex_catalog_has_effort reads the installed Codex model cache because supported
+# reasoning levels vary by model. Re-verify the cache shape and current values with
+# `codex --version` and `jq '.models[] | {slug, supported_reasoning_levels}'
+# "${CODEX_HOME:-$HOME/.codex}/models_cache.json"`.
+codex_catalog_has_effort() {
+  local model=$1 effort=$2 codex_home cache_file
+  [ -n "$model" ] && [ "$model" != default ] || return 1
+  codex_home=${CODEX_HOME:-${HOME:-}/.codex}
+  cache_file="$codex_home/models_cache.json"
+  [ -r "$cache_file" ] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  jq -e --arg model "$model" --arg effort "$effort" '
+    any(
+      ((.models? | select(type == "array"))[]?);
+      .slug? == $model
+      and any(
+        ((.supported_reasoning_levels? | select(type == "array"))[]?);
+        .effort? == $effort
+      )
+    )
+  ' "$cache_file" >/dev/null 2>&1
+}
+
 effort_flag_for_harness() {
-  local harness=$1 effort=$2
+  local harness=$1 effort=$2 model=${3:-}
   [ -n "$effort" ] && [ "$effort" != default ] || return 0
   case "$harness" in
     claude)
@@ -1497,11 +1520,17 @@ effort_flag_for_harness() {
       esac
       ;;
     codex)
-      # The installed codex config schema uses model_reasoning_effort, and the
-      # bundled model catalog advertises low|medium|high|xhigh. Omit max rather
-      # than passing an unsupported value.
+      # Codex uses model_reasoning_effort; max is emitted only when the selected
+      # model's installed catalog entry lists it. Missing or invalid catalog data
+      # keeps max on the record-and-omit path. Re-verify with codex --version and
+      # the jq command in codex_catalog_has_effort above.
       case "$effort" in
         low|medium|high|xhigh) printf -- '-c %s ' "$(shell_quote "model_reasoning_effort=\"$effort\"")" ;;
+        max)
+          if codex_catalog_has_effort "$model" "$effort"; then
+            printf -- '-c %s ' "$(shell_quote "model_reasoning_effort=\"$effort\"")"
+          fi
+          ;;
       esac
       ;;
     grok)
@@ -2956,7 +2985,7 @@ sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
 sq_opinput=$(shell_quote "$FM_ROOT/bin/fm-operational-input.sh")
 sq_worktree=$(shell_quote "$WT")
 MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
-EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT")
+EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT" "$MODEL")
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
 LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
 LAUNCH=${LAUNCH//__BRIEF__/$sq_brief}

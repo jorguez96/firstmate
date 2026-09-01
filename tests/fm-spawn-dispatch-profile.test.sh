@@ -105,6 +105,17 @@ run_ship_spawn() {
   run_spawn "$@" --mode no-mistakes --yolo off
 }
 
+write_codex_catalog() {
+  local codex_home=$1 model=$2 supports_max=$3 levels
+  levels='{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"}'
+  if [ "$supports_max" -eq 1 ]; then
+    levels="$levels,{\"effort\":\"max\"}"
+  fi
+  mkdir -p "$codex_home"
+  printf '%s\n' "{\"models\":[{\"slug\":\"$model\",\"supported_reasoning_levels\":[$levels]}]}" \
+    > "$codex_home/models_cache.json"
+}
+
 read_case_record() {
   IFS='|' read -r CASE_DIR HOME_DIR PROJ_DIR WT_DIR FAKEBIN_DIR LAUNCH_LOG <<EOF
 $1
@@ -417,21 +428,88 @@ test_codex_threads_model_and_effort() {
   pass "codex receives --model and model_reasoning_effort profile flags"
 }
 
-test_codex_omits_invalid_max_effort() {
+test_codex_threads_max_effort_when_catalog_supports_it() {
   local rec id out status launch
-  id=profile-codex-max-z4
-  rec=$(make_spawn_case profile-codex-max codex "$id")
+  id=profile-codex-max-supported-z4a
+  rec=$(make_spawn_case profile-codex-max-supported codex "$id")
   read_case_record "$rec"
+  write_codex_catalog "$CASE_DIR/codex" gpt-5.6-luna 1
 
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model gpt-5 --effort max)
+  out=$(CODEX_HOME="$CASE_DIR/codex" run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --model gpt-5.6-luna --effort max)
   status=$?
-  expect_code 0 "$status" "codex spawn with unsupported max effort should omit the effort flag"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 max
+  expect_code 0 "$status" "codex spawn with catalog-supported max effort should succeed"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5.6-luna max
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "codex --model 'gpt-5' --dangerously-bypass-approvals-and-sandbox" \
+  assert_contains "$launch" "codex --model 'gpt-5.6-luna' -c 'model_reasoning_effort=\"max\"' --dangerously-bypass-approvals-and-sandbox" \
+    "codex launch did not thread catalog-supported max reasoning effort"
+  pass "codex passes max when the selected catalog model supports it"
+}
+
+test_codex_omits_unsupported_max_effort() {
+  local rec id out status launch
+  id=profile-codex-max-unsupported-z4b
+  rec=$(make_spawn_case profile-codex-max-unsupported codex "$id")
+  read_case_record "$rec"
+  write_codex_catalog "$CASE_DIR/codex" gpt-5.5 0
+
+  out=$(CODEX_HOME="$CASE_DIR/codex" run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --model gpt-5.5 --effort max)
+  status=$?
+  expect_code 0 "$status" "codex spawn with catalog-unsupported max effort should succeed"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5.5 max
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "codex --model 'gpt-5.5' --dangerously-bypass-approvals-and-sandbox" \
     "codex launch did not preserve the model flag when max effort was omitted"
   assert_not_contains "$launch" "model_reasoning_effort" "codex launch must omit unsupported max reasoning effort"
-  pass "codex omits unsupported max effort instead of passing a bad config value"
+  pass "codex records but omits max when the selected catalog model does not support it"
+}
+
+test_codex_threads_xhigh_effort() {
+  local rec id out status launch
+  id=profile-codex-xhigh-z4c
+  rec=$(make_spawn_case profile-codex-xhigh codex "$id")
+  read_case_record "$rec"
+
+  out=$(CODEX_HOME="$CASE_DIR/no-codex-cache" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --model gpt-5.5 --effort xhigh)
+  status=$?
+  expect_code 0 "$status" "codex spawn with xhigh effort should succeed without a catalog"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5.5 xhigh
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "codex --model 'gpt-5.5' -c 'model_reasoning_effort=\"xhigh\"' --dangerously-bypass-approvals-and-sandbox" \
+    "codex launch changed its existing xhigh reasoning effort behavior"
+  pass "codex preserves its existing xhigh reasoning effort behavior"
+}
+
+test_codex_missing_or_malformed_catalog_preserves_existing_behavior() {
+  local variant rec id out status launch cache_home
+  for variant in absent malformed; do
+    id="profile-codex-cache-${variant}-z4d"
+    rec=$(make_spawn_case "profile-codex-cache-$variant" codex "$id")
+    read_case_record "$rec"
+    cache_home="$CASE_DIR/codex"
+    if [ "$variant" = malformed ]; then
+      mkdir -p "$cache_home"
+      printf '%s\n' '{not valid json' > "$cache_home/models_cache.json"
+    else
+      cache_home="$CASE_DIR/missing-codex"
+    fi
+
+    out=$(CODEX_HOME="$cache_home" \
+      run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" --model gpt-5.6-luna --effort max)
+    status=$?
+    expect_code 0 "$status" "codex spawn with a $variant catalog should preserve launch success"
+    assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5.6-luna max
+    launch=$(cat "$LAUNCH_LOG")
+    assert_contains "$launch" "codex --model 'gpt-5.6-luna' --dangerously-bypass-approvals-and-sandbox" \
+      "codex launch changed its model flag with a $variant catalog"
+    assert_not_contains "$launch" "model_reasoning_effort" \
+      "codex launch must omit max when its catalog is $variant"
+  done
+  pass "codex preserves record-and-omit behavior when its model catalog is absent or malformed"
 }
 
 test_grok_threads_model_and_reasoning_effort() {
@@ -805,7 +883,10 @@ test_active_dispatch_profile_allows_positional_harness
 test_active_dispatch_profile_allows_raw_launch_command
 test_claude_threads_model_and_effort
 test_codex_threads_model_and_effort
-test_codex_omits_invalid_max_effort
+test_codex_threads_max_effort_when_catalog_supports_it
+test_codex_omits_unsupported_max_effort
+test_codex_threads_xhigh_effort
+test_codex_missing_or_malformed_catalog_preserves_existing_behavior
 test_grok_threads_model_and_reasoning_effort
 test_grok_omits_invalid_max_reasoning_effort
 test_grok_omits_invalid_xhigh_reasoning_effort
