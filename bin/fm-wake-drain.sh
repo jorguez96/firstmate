@@ -375,6 +375,8 @@ print_status_presentation() {  # [<deduped-raw-rows>]
       holder_pid=${FM_LOCK_HELD_PID:-unknown}
       printf 'STATUS PRESENTATION SKIPPED: lock remains held by live pid %s after %ss; retry on the next drain.\n' \
         "$holder_pid" "$lock_timeout"
+    else
+      printf 'wake drain: status presentation lock could not be acquired safely\n' >&2
     fi
     return 1
   fi

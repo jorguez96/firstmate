@@ -974,7 +974,20 @@ fm_lock_acquire_wait_bounded() {
   if fm_lock_try_acquire "$lockdir"; then
     return 0
   fi
-  [ "$rc" -eq 124 ] && return 124
+  if [ "$rc" -eq 124 ]; then
+    owner_pid=$(cat "$lockdir/pid" 2>/dev/null || true)
+    case "$owner_pid" in
+      ''|*[!0-9]*|0) ;;
+      *)
+        if [ "$owner_pid" -gt 0 ] 2>/dev/null && fm_pid_alive "$owner_pid"; then
+          FM_LOCK_HELD_PID=$owner_pid
+          return 124
+        fi
+        ;;
+    esac
+    FM_LOCK_HELD_PID=
+    return 1
+  fi
   return "$rc"
 }
 

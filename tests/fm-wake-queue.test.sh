@@ -1244,6 +1244,31 @@ test_live_presentation_holder_is_deadlined_without_weakening_ack() {
   pass "presentation lock waits are bounded and retriable without weakening acknowledgement atomicity"
 }
 
+test_malformed_presentation_lock_reports_acquire_failure() {
+  local dir state status out err
+  dir=$(make_case malformed-presentation-lock)
+  state="$dir/state"
+  status="$state/task.status"
+  out="$dir/drain.out"
+  err="$dir/drain.err"
+
+  printf 'needs-decision [key=fixture]: malformed lock remains retriable\n' > "$status"
+  append_wake "$state" signal task.status "signal: $status" \
+    || fail "could not seed the malformed-lock wake"
+  : > "$state/.status-presentation-lock"
+
+  FM_STATE_OVERRIDE="$state" FM_STATUS_PRESENTATION_LOCK_TIMEOUT=1 \
+    "$DRAIN" > "$out" 2> "$err" || fail "malformed-lock drain failed"
+  grep -F 'wake drain: status presentation lock could not be acquired safely' "$err" >/dev/null \
+    || fail "malformed presentation lock did not report an acquire failure"
+  if grep -F 'STATUS PRESENTATION SKIPPED: lock remains held by live pid' "$out" >/dev/null; then
+    fail "malformed presentation lock was reported as live-holder contention"
+  fi
+  grep "$(printf '\tsignal\t')" "$out" >/dev/null \
+    || fail "malformed presentation lock dropped the durable wake row"
+  pass "malformed presentation locks report acquire failure instead of contention"
+}
+
 # Drain-time historical annotation staleness: a turn-ended-only wake row must
 # not present an already-announced status line as a new update, while a status
 # file with unannounced bytes keeps its annotation and a direct status row is
@@ -1295,6 +1320,7 @@ test_historical_annotation_skips_announced_status() {
 
 test_self_held_lock_reclaims_instead_of_deadlocking
 test_live_presentation_holder_is_deadlined_without_weakening_ack
+test_malformed_presentation_lock_reports_acquire_failure
 test_secondmate_foreign_queue_stall_is_one_shot_and_read_only
 test_secondmate_stall_marker_rejects_symlink
 test_acknowledged_stall_publication_survives_pre_marker_crash
