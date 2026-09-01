@@ -217,6 +217,34 @@ test_ship_modes_generate_clean_briefs() {
   pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
 }
 
+test_user_invoked_skill_instructions_reach_ship_and_scout() {
+  local home kind id brief general specific
+  home="$TMP_ROOT/user-invoked-skill-home"
+  mkdir -p "$home/data"
+  # shellcheck disable=SC2016 # Literal markdown backticks and tilde paths must remain unexpanded.
+  general='Before starting work for any user-invoked skill named in this brief, open and read its own `~/.agents/skills/<name>/SKILL.md` in full.'
+  # shellcheck disable=SC2016 # Literal markdown backticks and tilde paths must remain unexpanded.
+  specific='The `to-spec`, `to-tickets`, and `implement` skills are user-invoked and carry `disable-model-invocation: true`, so you cannot load them as skills; read `~/.agents/skills/to-spec/SKILL.md`, `~/.agents/skills/to-tickets/SKILL.md`, and `~/.agents/skills/implement/SKILL.md` directly.'
+
+  for kind in ship scout; do
+    id="brief-user-invoked-$kind"
+    if [ "$kind" = scout ]; then
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null 2>&1
+    else
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
+    fi
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$kind brief was not scaffolded"
+    assert_grep "# User-invoked skill instructions" "$brief" \
+      "$kind brief omitted the user-invoked skill section"
+    assert_grep "$general" "$brief" \
+      "$kind brief did not require reading a named user-invoked skill in full"
+    assert_grep "$specific" "$brief" \
+      "$kind brief did not explain why to-spec, to-tickets, and implement must be read directly"
+  done
+  pass "fm-brief.sh: user-invoked skill instructions reach ship and scout briefs"
+}
+
 # A ship task's delivery mode is firstmate's per-task decision, so a missing or
 # unusable value must stop the scaffold instead of silently defaulting. The
 # no-mistakes-prod-only row is the conditional registry policy: it is never a task
@@ -766,6 +794,7 @@ test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
+test_user_invoked_skill_instructions_reach_ship_and_scout
 test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply

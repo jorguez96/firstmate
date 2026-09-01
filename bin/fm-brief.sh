@@ -321,6 +321,13 @@ EOF
 HERDR_SECTION=${HERDR_SECTION%$'\n'}
 fi
 
+IFS= read -r -d '' USER_INVOKED_SKILL_SECTION <<'EOF' || true
+# User-invoked skill instructions
+Before starting work for any user-invoked skill named in this brief, open and read its own `~/.agents/skills/<name>/SKILL.md` in full.
+The `to-spec`, `to-tickets`, and `implement` skills are user-invoked and carry `disable-model-invocation: true`, so you cannot load them as skills; read `~/.agents/skills/to-spec/SKILL.md`, `~/.agents/skills/to-tickets/SKILL.md`, and `~/.agents/skills/implement/SKILL.md` directly.
+EOF
+USER_INVOKED_SKILL_SECTION=${USER_INVOKED_SKILL_SECTION%$'\n'}
+
 if [ "$KIND" = scout ]; then
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
@@ -329,6 +336,8 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 {TASK}
 
 $HERDR_SECTION
+
+$USER_INVOKED_SKILL_SECTION
 
 # Setup
 You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch.
@@ -402,6 +411,8 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 {TASK}
 
 $HERDR_SECTION
+
+$USER_INVOKED_SKILL_SECTION
 
 # Setup
 You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch.
