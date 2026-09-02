@@ -11,3 +11,13 @@ __pycache__/
 *.pyc
 .env
 config/
+# Claude Code writes local project settings here.
+.claude/settings.local.json
+# OpenCode writes this generated project ignore file.
+.opencode/.gitignore
+# OpenCode writes local plugin dependencies here.
+.opencode/node_modules/
+# Pi writes project-local package payloads here.
+.pi/npm/
+# Pi writes project-local Git package clones here.
+.pi/git/

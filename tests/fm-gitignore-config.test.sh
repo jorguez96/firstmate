@@ -82,8 +82,37 @@ test_scratchpad2_does_not_dirty_porcelain() {
   pass "scratchpad2/ does not make git status --porcelain dirty"
 }
 
+test_harness_local_artifacts_do_not_dirty_porcelain() {
+  # Guarded sync uses git status --porcelain, so generated harness artifacts
+  # must remain invisible while contributor-facing project files stay visible.
+  local repo status sample
+  repo=$(mktemp -d "${TMPDIR:-/tmp}/fm-harness-ignore.XXXXXX")
+  git init -q "$repo"
+  cp "$ROOT/.gitignore" "$repo/.gitignore"
+  git -C "$repo" add .gitignore
+  git -C "$repo" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' \
+    commit -qm 'seed gitignore'
+  mkdir -p "$repo/.claude" "$repo/.opencode/node_modules/@opencode-ai/plugin" \
+    "$repo/.pi/npm" "$repo/.pi/git/github/example"
+  printf '{"outputStyle":"default"}\n' > "$repo/.claude/settings.local.json"
+  printf '%s\n' node_modules package.json package-lock.json bun.lock .gitignore \
+    > "$repo/.opencode/.gitignore"
+  printf 'plugin payload\n' > "$repo/.opencode/node_modules/@opencode-ai/plugin/index.js"
+  printf 'package payload\n' > "$repo/.pi/npm/package.json"
+  printf 'git package payload\n' > "$repo/.pi/git/github/example/index.ts"
+  status=$(git -C "$repo" status --porcelain)
+  rm -rf "$repo"
+  [ -z "$status" ] || fail "harness-local artifacts still dirty porcelain: $status"
+  for sample in .codex/config.toml .cursor/hooks.json .opencode/package.json .pi/settings.json; do
+    git -C "$ROOT" check-ignore -q --no-index "$sample" \
+      && fail "contributor-facing path is unexpectedly ignored: $sample"
+  done
+  pass "harness-local artifacts do not dirty porcelain and project config stays visible"
+}
+
 test_config_dir_ignored_as_category
 test_unrelated_path_stays_visible
 test_scratchpad_prefix_is_ignored
 test_scratchpad_prefix_ignores_no_tracked_path
 test_scratchpad2_does_not_dirty_porcelain
+test_harness_local_artifacts_do_not_dirty_porcelain
