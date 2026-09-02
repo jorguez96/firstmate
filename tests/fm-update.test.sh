@@ -48,6 +48,7 @@ new_world() {
   mkdir -p "$w/seed/bin" "$w/seed/.agents/skills"
   printf 'echo a\n' > "$w/seed/bin/tool.sh"
   printf 's1\n' > "$w/seed/.agents/skills/note.md"
+  cp "$ROOT/.gitignore" "$w/seed/.gitignore"
   git -C "$w/seed" add -A
   git -C "$w/seed" commit -qm c1
   git -C "$w/seed" push -q origin main
@@ -235,6 +236,28 @@ test_registry_backstop_dedup_and_self_exclusion() {
   pass "T7 registry backstop resolves, dedups meta+registry, excludes the firstmate repo"
 }
 
+# --- T8: Claude Code local settings do not block firstmate self-update ------
+test_firstmate_local_settings_do_not_block_update() {
+  local w out status
+  w=$(new_world t8)
+  mkdir -p "$w/main/.claude"
+  printf '{"outputStyle":"default"}\n' > "$w/main/.claude/settings.local.json"
+  status=$(git -C "$w/main" status --porcelain)
+  [ -z "$status" ] || fail "Claude Code local settings dirty the firstmate checkout: $status"
+
+  bump_origin "$w" readme
+  out=$(run_update "$w")
+
+  assert_contains "$out" "firstmate: updated " "firstmate self-update fast-forwards with local settings present"
+  assert_not_contains "$out" "firstmate: skipped: dirty working tree" \
+    "local settings do not trigger the dirty working tree guard"
+  [ "$(git -C "$w/main" rev-parse HEAD)" = "$(git -C "$w/main" rev-parse origin/main)" ] \
+    || fail "firstmate did not fast-forward with local settings present"
+  status=$(git -C "$w/main" status --porcelain)
+  [ -z "$status" ] || fail "firstmate checkout is dirty after self-update: $status"
+  pass "T8 Claude Code local settings do not block firstmate self-update"
+}
+
 # --- T9: firstmate repo on a feature branch is skipped ---------------------
 test_firstmate_wrong_branch_skipped() {
   local w out before
@@ -297,6 +320,7 @@ test_dirty_secondmate_skipped
 test_diverged_secondmate_skipped
 test_idempotent_already_current
 test_registry_backstop_dedup_and_self_exclusion
+test_firstmate_local_settings_do_not_block_update
 test_firstmate_wrong_branch_skipped
 test_firstmate_detached_head_skipped
 test_unsafe_secondmate_home_skipped_before_git_update
