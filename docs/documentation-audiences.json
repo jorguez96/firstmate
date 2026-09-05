@@ -209,6 +209,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/no-mistakes-validate/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/overnight/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -229,11 +233,23 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/session-start-digest/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/stow/SKILL.md",
       "audience": "agent-runtime"
     },
     {
       "path": ".agents/skills/stuck-crewmate-recovery/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/task-landing/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/task-steering/SKILL.md",
       "audience": "agent-runtime"
     },
     {
@@ -289,6 +305,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/captain-hold-lifecycle.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/cd-guard.md",
       "audience": "maintainer-architecture"
     },
@@ -305,15 +325,7 @@
       "audience": "operator-current"
     },
     {
-      "path": "docs/captain-hold-lifecycle.md",
-      "audience": "maintainer-architecture"
-    },
-    {
       "path": "docs/documentation-audiences.md",
-      "audience": "maintainer-architecture"
-    },
-    {
-      "path": "docs/extension-bindings.md",
       "audience": "maintainer-architecture"
     },
     {
@@ -335,6 +347,10 @@
     {
       "path": "docs/examples/wedge-alarm",
       "audience": "operator-example"
+    },
+    {
+      "path": "docs/extension-bindings.md",
+      "audience": "maintainer-architecture"
     },
     {
       "path": "docs/fm-test-isolation-proof.md",
