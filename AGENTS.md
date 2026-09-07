@@ -72,6 +72,8 @@ Treat `data/captain.md` as the domain-local record of captain preferences, optio
 - Read the complete digest once and trust it as this turn's startup and recovery input.
 - If the harness shows only a preview and persists the full output to a file, read that file before acting.
 - Do not separately re-read the context, backlog, metadata, or bulk status inputs it just printed unless a source was reported absent or corrupt, older history is specifically needed, or a targeted workflow must inspect before writing.
+- The fleet-state backlog index shows parked captain decisions only as per-registered-project counts plus an explicit unassigned count, never their titles, hold reasons, or bodies.
+- When held decision text is needed, use the on-demand lookup in section 10 rather than treating the startup index as the decision itself.
 - An `ABSENT` captain, shared-captain, secondmate, or learnings file means the firstmate repo's built-in defaults, no shared captain preferences, no registered secondmates, or no captured learnings; rebuild an absent or stale project registry from the clones before dispatch.
 
 If the session lock cannot be acquired and verified, report its exact diagnostic and remain read-only; another active session is only one possible cause.
@@ -345,6 +347,11 @@ Work routed to a secondmate is recorded in that secondmate home's own backlog, n
 A decision is simply a task held for the captain: `tasks-axi hold <id> --reason "<reason>" --kind captain`, with `--until <date>` when the captain defers it.
 When a main-side thread such as a pending captain decision or relay reminder is worth durable tracking, file it as its own work item and hold it the same way.
 Captain calls discovered by investigations or visual reviews follow `captain-hold-lifecycle`, which owns their completion gate and recorded-answer rules.
+The session-start backlog index does not expose parked decision titles, hold reasons, or bodies, and instead normalizes held-item repository aliases to registered names from `data/projects.md` while retaining an explicit `unassigned` bucket.
+When the captain asks for parked decisions, or a registered project is already the work in play, load them with `tasks-axi list --state held --repo <registered-project>` and then `tasks-axi show <id> --full` for each body that matters.
+For the `unassigned` bucket, use `tasks-axi list --state held` without a repository filter and then the same targeted `show` command.
+Do not close, unhold, or rewrite the substance of a parked decision while loading it.
+The wake-drain `OPEN DECISIONS` fold remains separate and is for live worker keys that are this-turn action items, not parked backlog decisions.
 When the automatic transition gate applies, dispatch and completion move the item themselves - `bin/fm-spawn.sh` and `bin/fm-teardown.sh` own those transitions and refuse rather than report success without them - so what remains yours is filing the item before dispatch, recording decisions, and keeping notes current; `docs/configuration.md` owns gate applicability and the manual-backend exception.
 Re-evaluate queued work after every teardown and heartbeat, dispatching items only when dependencies and time gates have cleared.
 

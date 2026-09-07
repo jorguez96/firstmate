@@ -15,9 +15,10 @@
 #     watcher ownership
 #   - status-tail bounding, default and FM_SESSION_START_STATUS_TAIL override
 #   - the per-line status-tail cap and its truncation marker
-#   - startup backlog composition: done rows dropped, every in-flight/held/
-#     blocked row kept whole, the dispatchable queued listing bounded with an
-#     exact disclosed remainder
+#   - startup backlog composition: done rows dropped, parked decisions reduced
+#     to a normalized per-project count index, unheld in-flight/blocked rows
+#     kept whole, and the dispatchable queued listing bounded with an exact
+#     disclosed remainder
 #   - orphan status logs whose task meta has already disappeared
 #   - per-task endpoint-liveness lines for a live and a dead recorded target,
 #     tmux and herdr both
@@ -180,16 +181,23 @@ case "${1:-}" in
         exit 9
         ;;
       *'--state in_flight'*)
-        task_header 1
+        task_header 2
+        printf '%s\n' '  active-startup,in_flight,ship,firstmate,Active startup work,none,"-","-"'
         printf '%s\n' '  compact-startup,in_flight,ship,firstmate,Compact startup digest,none,captain,captain choice pending'
         ;;
       *'--state held'*)
-        task_header 1
-        printf '%s\n' '  held-queued,queued,ship,firstmate,Held queued work,none,captain,captain choice pending'
+        task_header 6
+        printf '%s\n' '  held-finance,queued,ship,finance,Finance choice,none,captain,finance choice pending'
+        printf '%s\n' '  held-fantasy-short,queued,ship,fantasy-strategy,Fantasy short choice,none,captain,fantasy choice pending'
+        printf '%s\n' '  held-fantasy-owner,queued,ship,jorguez96/fantasy-strategy,Fantasy owner choice,none,captain,fantasy choice pending'
+        printf '%s\n' '  held-fantasy-url,queued,ship,github.com/jorguez96/fantasy-strategy,Fantasy URL choice,none,captain,fantasy choice pending'
+        printf '%s\n' '  held-fantasy-title,queued,ship,-,Review fantasy-strategy choice,none,captain,fantasy title choice pending'
+        printf '%s\n' '  held-unassigned,queued,ship,-,Captain choice pending,none,captain,unassigned choice pending'
         ;;
       *'--state queued'*'--blocked'*)
-        task_header 1
+        task_header 2
         printf '%s\n' '  blocked-followup,queued,scout,firstmate,Follow compact startup,compact-startup,"-","-"'
+        printf '%s\n' '  blocked-held,queued,scout,firstmate,Held blocked followup,none,captain,blocked choice pending'
         ;;
       *)
         printf '%s\n' 'startup recovery must not request an unfiltered whole-backlog listing' >&2
@@ -1578,6 +1586,11 @@ EOF
 # markers exist so a leak is unmistakable.
 write_long_body_backlog() {
   local path=$1 i=1
+  printf '%s\n' \
+    '- firstmate [direct-PR] - Firstmate fixture (added 2026-07-01)' \
+    '- finance [direct-PR] - Finance fixture (added 2026-07-01)' \
+    '- fantasy-strategy [direct-PR] - Fantasy fixture (added 2026-07-01)' \
+    > "$(dirname "$path")/projects.md"
   cat > "$path" <<'EOF'
 # Backlog
 
@@ -1590,6 +1603,7 @@ write_long_body_backlog() {
 - [ ] blocked-followup - Follow compact startup blocked-by: compact-startup - waits for implementation (repo: firstmate) (kind: scout) (since 2026-07-15)
   QUEUED-BODY-LINE this is another long multiline note.
 - [ ] held-queued - Held queued work (repo: firstmate) (kind: ship) (hold: captain choice pending) (hold-kind: captain)
+- [ ] held-title - Review fantasy-strategy captain choice (repo: -) (kind: scout) (hold: fantasy choice pending) (hold-kind: captain)
 EOF
   while [ "$i" -le 25 ]; do
     printf -- '- [ ] plain-%s - Plain queued item %s (repo: firstmate) (kind: ship)\n' "$i" "$i" >> "$path"
@@ -1602,7 +1616,7 @@ EOF
 EOF
 }
 
-test_backlog_compact_tasks_axi_omits_bodies_and_keeps_metadata() {
+test_backlog_compact_tasks_axi_indexes_held_rows_without_loading_them() {
   local rec root home fakebin out log
   rec=$(new_world backlog-compact-tasks-axi)
   IFS='|' read -r root home fakebin <<EOF
@@ -1620,14 +1634,28 @@ EOF
   out=$(FM_FAKE_TASKS_AXI_LOG="$log" FM_FAKE_TASKS_AXI_READY=3 \
     run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
-  assert_contains "$out" "compact backlog listing (tasks-axi; done rows omitted; every in-flight, held, and blocked row shown in full; ready queued bounded to 20; task bodies omitted)" \
+  assert_contains "$out" "compact backlog listing (tasks-axi; done rows omitted; parked decisions indexed by project; unheld in-flight and blocked rows shown in full; ready queued bounded to 20; task bodies omitted)" \
     "compatible tasks-axi backend did not render the compact backlog listing"
   assert_contains "$out" "tasks[1]{id,state,kind,repo,title,blocked_by,hold_kind,hold_reason}:" \
     "tasks-axi compact listing omitted the expected structured field header"
-  assert_contains "$out" "compact-startup,in_flight,ship,firstmate,Compact startup digest,none,captain,captain choice pending" \
-    "tasks-axi compact listing omitted in-flight identity, state, or hold metadata"
-  assert_contains "$out" "held-queued,queued,ship,firstmate,Held queued work,none,captain,captain choice pending" \
-    "tasks-axi compact listing omitted a held row or its hold metadata"
+  assert_contains "$out" "active-startup,in_flight,ship,firstmate,Active startup work,none,\"-\",\"-\"" \
+    "tasks-axi compact listing omitted an unheld in-flight row"
+  assert_contains "$out" "parked decisions (on demand):" \
+    "tasks-axi compact listing omitted the parked-decision index"
+  assert_contains "$out" "  finance: 1" \
+    "tasks-axi compact listing did not count a held row under its registered project"
+  assert_contains "$out" "  fantasy-strategy: 4" \
+    "tasks-axi compact listing did not normalize fantasy-strategy repository aliases"
+  assert_contains "$out" "  unassigned: 1" \
+    "tasks-axi compact listing did not retain an explicit unassigned bucket"
+  assert_not_contains "$out" "compact-startup,in_flight" \
+    "tasks-axi compact listing leaked a held in-flight title"
+  assert_not_contains "$out" "held-fantasy-short" \
+    "tasks-axi compact listing leaked a parked decision id"
+  assert_not_contains "$out" "blocked-held" \
+    "tasks-axi compact listing leaked a held blocked title"
+  assert_not_contains "$out" "finance choice pending" \
+    "tasks-axi compact listing leaked a parked decision reason"
   assert_contains "$out" 'blocked-followup,queued,scout,firstmate,Follow compact startup,compact-startup,"-","-"' \
     "tasks-axi compact listing omitted blocked-by metadata"
   assert_contains "$out" "ready-3,queued,ship,firstmate,Ready item 3" \
@@ -1648,16 +1676,16 @@ EOF
   # The fake refuses a body field, an unfiltered listing, and a done listing, so
   # a clean render already proves those were never asked for; pin the group
   # filters the listing is built from.
-  assert_grep "--state in_flight --fields blocked_by,hold_kind,hold_reason" "$log" \
+  assert_grep "--state in_flight --fields blocked_by,hold_kind" "$log" \
     "session start did not ask tasks-axi for the in-flight group"
-  assert_grep "--state held --fields blocked_by,hold_kind,hold_reason" "$log" \
+  assert_grep "--state held --fields blocked_by,hold_kind" "$log" \
     "session start did not ask tasks-axi for the held group"
-  assert_grep "--state queued --blocked --fields blocked_by,hold_kind,hold_reason" "$log" \
+  assert_grep "--state queued --blocked --fields blocked_by,hold_kind" "$log" \
     "session start did not ask tasks-axi for the blocked queued group"
   assert_grep "ready --file $home/data/backlog.md" "$log" \
     "session start did not ask tasks-axi for the dispatchable queued set"
 
-  pass "compatible tasks-axi backlog rendering drops done rows and keeps every in-flight, held, and blocked row"
+  pass "compatible tasks-axi backlog rendering indexes held rows and keeps only unheld recovery rows"
 }
 
 # The bound may only ever cut the dispatchable-now listing, and whatever it cuts
@@ -1684,13 +1712,16 @@ EOF
   assert_contains "$out" "(4 more queued - tasks-axi ready --file $home/data/backlog.md)" \
     "the bounded queued listing did not disclose an exact remainder and how to see it"
 
-  # The bound is for dispatchable work only: held and blocked rows stay whole.
-  assert_contains "$out" "held-queued,queued,ship,firstmate,Held queued work,none,captain,captain choice pending" \
-    "the queued bound swallowed a held row"
+  # The bound is for dispatchable work only: parked decisions stay indexed and
+  # blocked rows remain whole.
+  assert_contains "$out" "  fantasy-strategy: 4" \
+    "the queued bound swallowed a parked-decision count"
+  assert_not_contains "$out" "held-fantasy-short" \
+    "the queued bound leaked a parked decision id"
   assert_contains "$out" 'blocked-followup,queued,scout,firstmate,Follow compact startup,compact-startup,"-","-"' \
     "the queued bound swallowed a blocked row"
-  assert_contains "$out" "compact-startup,in_flight,ship,firstmate,Compact startup digest,none,captain,captain choice pending" \
-    "the queued bound swallowed an in-flight row"
+  assert_contains "$out" "active-startup,in_flight,ship,firstmate,Active startup work,none,\"-\",\"-\"" \
+    "the queued bound swallowed an unheld in-flight row"
 
   pass "the startup backlog bound cuts only dispatchable queued rows and discloses the remainder exactly"
 }
@@ -1708,17 +1739,25 @@ EOF
 
   out=$(FM_SESSION_START_QUEUED_LIMIT=4 run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
-  assert_contains "$out" "compact backlog listing (manual backend; done rows omitted; every in-flight, held, and blocked title line kept; other queued bounded to 4; indented task bodies omitted)" \
+  assert_contains "$out" "compact backlog listing (manual backend; done rows omitted; parked decisions indexed by project; unheld in-flight and blocked title lines kept; other queued bounded to 4; indented task bodies omitted)" \
     "manual backend did not use compact title-line rendering"
   assert_contains "$out" "## In flight" "manual compact rendering omitted the in-flight section heading"
-  assert_contains "$out" "- [ ] compact-startup - Compact startup digest" \
-    "manual compact rendering omitted the in-flight title line"
-  assert_contains "$out" "(hold: captain choice pending) (hold-kind: captain)" \
-    "manual compact rendering omitted hold metadata"
+  assert_contains "$out" "parked decisions (on demand):" \
+    "manual compact rendering omitted the parked-decision index"
+  assert_contains "$out" "  firstmate: 2" \
+    "manual compact rendering did not count held rows under their registered project"
+  assert_contains "$out" "  fantasy-strategy: 1" \
+    "manual compact rendering did not label a clearly identified title-line project"
+  assert_not_contains "$out" "- [ ] compact-startup - Compact startup digest" \
+    "manual compact rendering leaked a held in-flight title"
+  assert_not_contains "$out" "(hold: captain choice pending) (hold-kind: captain)" \
+    "manual compact rendering leaked a parked decision reason"
   assert_contains "$out" "blocked-by: compact-startup - waits for implementation" \
     "manual compact rendering omitted blocker metadata"
-  assert_contains "$out" "- [ ] held-queued - Held queued work" \
-    "manual compact rendering dropped a held queued title line"
+  assert_not_contains "$out" "- [ ] held-queued - Held queued work" \
+    "manual compact rendering leaked a held queued title line"
+  assert_not_contains "$out" "- [ ] held-title - Review fantasy-strategy captain choice" \
+    "manual compact rendering leaked a repo-less parked decision title"
   assert_not_contains "$out" "OVERSIZED-BODY-LINE" "manual compact digest leaked an in-flight task body"
   assert_not_contains "$out" "QUEUED-BODY-LINE" "manual compact digest leaked a queued task body"
   assert_not_contains "$out" "DONE-ROW-LINE" "manual compact digest listed a done row at startup"
@@ -1727,13 +1766,13 @@ EOF
     "manual compact rendering dropped a queued title line inside its bound"
   assert_not_contains "$out" "- [ ] plain-5 - Plain queued item 5" \
     "manual compact rendering did not bound its plain queued listing"
-  assert_contains "$out" "(shown 1 in-flight, 2 held or blocked queued, 4 of 25 other queued title line(s); 1 done row(s) omitted)" \
+  assert_contains "$out" "(shown 0 in-flight, 3 parked decision(s) indexed, 1 blocked queued, 4 of 25 other queued title line(s); 1 done row(s) omitted)" \
     "manual compact rendering did not report its bound accounting"
   assert_contains "$out" "(21 more queued - raise FM_SESSION_START_QUEUED_LIMIT or read data/backlog.md for the rest)" \
     "manual compact rendering did not disclose an exact queued remainder"
   assert_contains "$out" "or data/backlog.md" "manual compact digest omitted the data/backlog.md full-body pointer"
 
-  pass "manual backlog rendering drops done rows, keeps every held or blocked title line, and bounds the rest"
+  pass "manual backlog rendering indexes held rows, keeps unheld blockers, and bounds the rest"
 }
 
 test_backlog_compact_tasks_axi_unavailable_uses_manual_fallback() {
@@ -1750,12 +1789,16 @@ EOF
 
   assert_contains "$out" "compact backlog listing (tasks-axi unavailable or incompatible; done rows omitted;" \
     "unavailable tasks-axi did not fall back to compact title-line rendering"
-  assert_contains "$out" "- [ ] compact-startup - Compact startup digest" \
-    "unavailable tasks-axi fallback omitted a backlog title line"
+  assert_contains "$out" "  firstmate: 2" \
+    "unavailable tasks-axi fallback omitted the parked-decision count index"
+  assert_contains "$out" "  fantasy-strategy: 1" \
+    "unavailable tasks-axi fallback omitted a normalized title-line project"
+  assert_not_contains "$out" "- [ ] compact-startup - Compact startup digest" \
+    "unavailable tasks-axi fallback leaked a held backlog title line"
   assert_not_contains "$out" "OVERSIZED-BODY-LINE" "unavailable tasks-axi fallback leaked an in-flight task body"
   assert_not_contains "$out" "DONE-ROW-LINE" "unavailable tasks-axi fallback listed a done row at startup"
 
-  pass "unavailable or incompatible tasks-axi falls back to compact manual backlog rendering"
+  pass "unavailable or incompatible tasks-axi falls back to compact manual rendering with held rows indexed"
 }
 
 # --- runtime bound -----------------------------------------------------------
@@ -2488,7 +2531,7 @@ test_endpoint_liveness_herdr
 test_composition_invokes_real_scripts
 test_branch_outcome_replay_and_lease_sweep
 test_non_pi_session_start_leaves_branch_state_untouched
-test_backlog_compact_tasks_axi_omits_bodies_and_keeps_metadata
+test_backlog_compact_tasks_axi_indexes_held_rows_without_loading_them
 test_backlog_queued_bound_discloses_its_remainder
 test_backlog_compact_manual_backend_skips_indented_bodies
 test_backlog_compact_tasks_axi_unavailable_uses_manual_fallback

@@ -126,10 +126,10 @@
 #   - `done` rows are never listed. Retained completion history belongs to the
 #     reporting surfaces (bin/fm-bearings-snapshot.sh, /ahoy), and at startup it
 #     is pure weight - 10 done rows cost 3.3KB in an observed main-home digest.
-#   - Every in-flight, held, and blocked row is listed IN FULL, with its
-#     hold_kind/hold_reason and blocked_by. Those are the rows AGENTS.md
-#     sections 7 and 10 make actionable at startup, so they are never bounded
-#     away.
+#   - In-flight and blocked rows that are not held are listed IN FULL, with
+#     their blocked_by metadata. Held rows are parked captain decisions, so the
+#     digest prints only one normalized count per registered project plus an
+#     explicit unassigned bucket.
 #   - Only the plain queued (dispatchable-now) listing is bounded, by
 #     FM_SESSION_START_QUEUED_LIMIT, default 20. Anything it omits is disclosed
 #     with an exact remainder count and the command that shows the rest, so a
@@ -138,17 +138,15 @@
 #     listing indiscriminately and so could drop a held or blocked row.)
 # When compatible tasks-axi is selected and available, the shared tasks-axi
 # backend probe remains the compatibility owner and this script asks
-# `tasks-axi list` for the compact identity fields plus blocked_by, hold_kind,
-# and hold_reason, never body. The groups are the tool's own filters
+# `tasks-axi list` for the compact identity fields plus blocked_by and
+# hold_kind, never body or hold reason. The groups are the tool's own filters
 # (`--state in_flight`, `--state held`, `--state queued --blocked`, and
-# `tasks-axi ready`), so this script never reimplements task state; the groups
-# can overlap, because an in-flight item that is also held appears under both.
+# `tasks-axi ready`), so this script never reimplements task state; held rows
+# are removed from the recovery groups before those groups reach the digest.
 # When manual mode is selected, or tasks-axi is unavailable or incompatible,
-# this script prints only backlog section headings and item title lines, so
-# title-line hold and blocked-by metadata remain visible while indented bodies
-# stay out of the startup digest; the same never-bound-a-held-or-blocked-row
-# rule applies, recognized there from the title line's own hold/blocked-by
-# markers.
+# this script prints only backlog section headings and unheld item title lines,
+# while held title lines become the same normalized per-project count index and
+# indented bodies stay out of the startup digest.
 # Full bodies are targeted follow-up only: `tasks-axi show <id> --full` when
 # compatible tasks-axi is available, or `data/backlog.md` when the file body is
 # truly needed.
@@ -352,7 +350,8 @@ STATUS_TAIL=${FM_SESSION_START_STATUS_TAIL:-5}
 case "$STATUS_TAIL" in ''|*[!0-9]*) STATUS_TAIL=5 ;; esac
 QUEUED_LIMIT=${FM_SESSION_START_QUEUED_LIMIT:-20}
 case "$QUEUED_LIMIT" in ''|*[!0-9]*|0) QUEUED_LIMIT=20 ;; esac
-BACKLOG_FIELDS=blocked_by,hold_kind,hold_reason
+BACKLOG_FIELDS=blocked_by,hold_kind
+PROJECT_REGISTRY="$DATA/projects.md"
 
 RULE='================================================================================'
 SUBRULE='--------------------------------------------------------------------------------'
@@ -381,21 +380,183 @@ print_file_or_absent() {
 }
 
 print_backlog_pointer() {
+  printf 'Parked decision details load on demand with tasks-axi list --state held --repo <registered-project> and tasks-axi show <id> --full; use tasks-axi list --state held for unassigned items.\n'
   printf 'Full task bodies remain available on demand: tasks-axi show <id> --full when compatible tasks-axi is available, or data/backlog.md.\n'
 }
 
-# A queued title line whose own text already marks it held or blocked. The
-# manual renderer has no task model, so this is the only signal it gets, and it
-# is the one tasks-axi's markdown backend writes: "(hold: ...)", "(hold-kind:
-# ...)", and "blocked-by: ...". Bracket expressions rather than backslashes,
-# because awk's -v applies escape processing before the regex is ever compiled.
-MANUAL_KEEP_RE='[(]hold|blocked-by:'
+# A title line whose own text already marks it held or blocked. The manual
+# renderer has no task model, so these are the signals tasks-axi's markdown
+# backend writes: "(hold: ...)", "(hold-kind: ...)", and "blocked-by: ...".
+# Bracket expressions rather than backslashes, because awk's -v applies escape
+# processing before the regex is ever compiled.
+MANUAL_HELD_RE='[(]hold'
+MANUAL_BLOCKED_RE='blocked-by:'
+
+# print_parked_index <tasks_axi|manual> <input>: print only the count index for
+# active held rows, normalizing repository aliases against data/projects.md.
+# The tasks-axi input is a held-only list, while the manual input is the full
+# markdown backlog and is filtered to held title lines here. Neither mode
+# prints a held title, reason, or body.
+print_parked_index_awk() {
+  awk -v mode="$PARKED_INDEX_MODE" -v registry="$PROJECT_REGISTRY" -v hold_re="$MANUAL_HELD_RE" '
+    function trim(value) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      return value
+    }
+    function csv_field(line, wanted,    i,c,field,number,quoted) {
+      sub(/^[[:space:]]+/, "", line)
+      number = 1
+      field = ""
+      quoted = 0
+      for (i = 1; i <= length(line); i++) {
+        c = substr(line, i, 1)
+        if (c == "\"") {
+          if (quoted && substr(line, i + 1, 1) == "\"") {
+            field = field c
+            i++
+          } else {
+            quoted = !quoted
+          }
+        } else if (c == "," && !quoted) {
+          if (number == wanted) return trim(field)
+          number++
+          field = ""
+        } else {
+          field = field c
+        }
+      }
+      if (number == wanted) return trim(field)
+      return ""
+    }
+    function title_project(title,    i,candidate,candidate_length,ambiguous) {
+      candidate = ""
+      candidate_length = 0
+      ambiguous = 0
+      for (i = 1; i <= registry_count; i++) {
+        if (index(tolower(title), tolower(registry_name[i])) == 0) continue
+        if (length(registry_name[i]) > candidate_length) {
+          candidate = registry_name[i]
+          candidate_length = length(registry_name[i])
+          ambiguous = 0
+        } else if (length(registry_name[i]) == candidate_length && registry_name[i] != candidate) {
+          ambiguous = 1
+        }
+      }
+      if (ambiguous) return ""
+      return candidate
+    }
+    function normalize_repo(raw, title,    i,clean,best,best_length,from_title) {
+      raw = trim(raw)
+      if ((raw == "" || raw == "-" || raw == "none") && title != "") {
+        from_title = title_project(title)
+        if (from_title != "") return from_title
+      }
+      if (raw == "" || raw == "-" || raw == "none") return "unassigned"
+      for (i = 1; i <= registry_count; i++) {
+        if (raw == registry_name[i]) return registry_name[i]
+      }
+      clean = raw
+      sub(/^https?:\/\//, "", clean)
+      sub(/^github\.com\//, "", clean)
+      sub(/^git@github\.com:/, "", clean)
+      sub(/\/$/, "", clean)
+      sub(/\.git$/, "", clean)
+      for (i = 1; i <= registry_count; i++) {
+        if (clean == registry_name[i]) return registry_name[i]
+      }
+      best = ""
+      best_length = 0
+      for (i = 1; i <= registry_count; i++) {
+        if (length(clean) > length(registry_name[i]) && \
+            substr(clean, length(clean) - length(registry_name[i]), 1) == "/" && \
+            substr(clean, length(clean) - length(registry_name[i]) + 1) == registry_name[i] && \
+            length(registry_name[i]) > best_length) {
+          best = registry_name[i]
+          best_length = length(registry_name[i])
+        }
+      }
+      if (best != "") return best
+      return "unassigned"
+    }
+    function manual_repo(line,    repo) {
+      repo = line
+      if (repo !~ /\(repo:/) return "-"
+      sub(/^.*\(repo:[[:space:]]*/, "", repo)
+      sub(/\).*/, "", repo)
+      return trim(repo)
+    }
+    function manual_title(line,    title) {
+      title = line
+      sub(/^[-*][[:space:]]+\[[^]]+\][[:space:]]*/, "", title)
+      return title
+    }
+    function emit_index(    i,shown) {
+      print "parked decisions (on demand):"
+      shown = 0
+      for (i = 1; i <= registry_count; i++) {
+        if ((count[registry_name[i]] + 0) > 0) {
+          printf "  %s: %d\n", registry_name[i], count[registry_name[i]]
+          shown = 1
+        }
+      }
+      if ((count["unassigned"] + 0) > 0) {
+        printf "  unassigned: %d\n", count["unassigned"]
+        shown = 1
+      }
+      if (!shown) print "(none)"
+    }
+    BEGIN {
+      if (registry != "") {
+        while ((getline registry_line < registry) > 0) {
+          sub(/^[[:space:]]*-[[:space:]]+/, "", registry_line)
+          split(registry_line, registry_fields, /[[:space:]]+/)
+          if (registry_fields[1] != "") registry_name[++registry_count] = registry_fields[1]
+        }
+        close(registry)
+      }
+    }
+    {
+      if (mode == "tasks_axi") {
+        if ($0 ~ /^tasks\[/) {
+          in_tasks = 1
+          next
+        }
+        if ($0 ~ /^help\[/) exit
+        if (in_tasks && $0 ~ /^[[:space:]]/) {
+          count[normalize_repo(csv_field($0, 4), csv_field($0, 5))]++
+        }
+        next
+      }
+      if ($0 ~ /^##[[:space:]]+/) {
+        state = $0
+        sub(/^##[[:space:]]+/, "", state)
+        sub(/[[:space:]]+$/, "", state)
+        next
+      }
+      if ((state == "In flight" || state == "Queued") && $0 ~ /^[-*][[:space:]]+/ && $0 ~ hold_re) {
+        count[normalize_repo(manual_repo($0), manual_title($0))]++
+      }
+    }
+    END { emit_index() }
+  '
+}
+
+print_parked_index() {
+  local mode=$1 input=$2
+  PARKED_INDEX_MODE=$mode
+  if [ "$mode" = manual ]; then
+    print_parked_index_awk < "$input"
+  else
+    printf '%s\n' "$input" | print_parked_index_awk
+  fi
+}
 
 print_backlog_manual_compact() {
   local path=$1 reason=$2
-  printf 'compact backlog listing (%s; done rows omitted; every in-flight, held, and blocked title line kept; other queued bounded to %s; indented task bodies omitted)\n' \
+  printf 'compact backlog listing (%s; done rows omitted; parked decisions indexed by project; unheld in-flight and blocked title lines kept; other queued bounded to %s; indented task bodies omitted)\n' \
     "$reason" "$QUEUED_LIMIT"
-  awk -v max="$QUEUED_LIMIT" -v keep_re="$MANUAL_KEEP_RE" '
+  print_parked_index manual "$path"
+  awk -v max="$QUEUED_LIMIT" -v held_re="$MANUAL_HELD_RE" -v blocked_re="$MANUAL_BLOCKED_RE" '
     function state_for_heading(line, heading) {
       heading = line
       sub(/^##[[:space:]]+/, "", heading)
@@ -411,21 +572,27 @@ print_backlog_manual_compact() {
       if (state != "" && state != "done") print $0
       next
     }
-    state == "in_flight" && /^[-*][[:space:]]+/ { in_flight++; print $0; next }
+    state == "in_flight" && /^[-*][[:space:]]+/ {
+      if ($0 ~ held_re) { held_total++; next }
+      in_flight++
+      print $0
+      next
+    }
     state == "done" && /^[-*][[:space:]]+/ { done_total++; next }
     state == "queued" && /^[-*][[:space:]]+/ {
       queued_total++
-      if ($0 ~ keep_re) { gated++; print $0; next }
+      if ($0 ~ held_re) { held_total++; held_queued++; next }
+      if ($0 ~ blocked_re) { blocked++; print $0; next }
       if (plain_shown < max) { plain_shown++; print $0 }
       next
     }
     END {
-      plain_total = queued_total - gated
+      plain_total = queued_total - held_queued - blocked
       if (in_flight + queued_total + done_total == 0) {
         print "(no backlog item title lines found)"
       } else {
-        printf "(shown %d in-flight, %d held or blocked queued, %d of %d other queued title line(s); %d done row(s) omitted)\n", \
-          in_flight, gated, plain_shown, plain_total, done_total
+        printf "(shown %d in-flight, %d parked decision(s) indexed, %d blocked queued, %d of %d other queued title line(s); %d done row(s) omitted)\n", \
+          in_flight, held_total, blocked, plain_shown, plain_total, done_total
         if (plain_total > plain_shown) {
           printf "(%d more queued - raise FM_SESSION_START_QUEUED_LIMIT or read data/backlog.md for the rest)\n", plain_total - plain_shown
         }
@@ -435,12 +602,65 @@ print_backlog_manual_compact() {
 }
 
 # tasks-axi closes every listing with its own help block. This section composes
-# four listings, so keeping them would repeat the same pointers four times, once
-# per group, each carrying this home's full backlog path. The section prints one
-# equivalent pointer of its own (print_backlog_pointer), so the per-group help
-# blocks stop at their `help[` header instead.
-strip_axi_help() {
-  awk '/^help\[/ { exit } { print }'
+# three listings plus the held-item index, so keeping those blocks would repeat
+# the same follow-up pointers several times. The section prints one equivalent
+# pointer of its own (print_backlog_pointer), so these helpers stop at `help[`.
+strip_axi_unheld() {
+  awk '
+    function csv_field(line, wanted,    i,c,field,number,quoted) {
+      sub(/^[[:space:]]+/, "", line)
+      number = 1
+      field = ""
+      quoted = 0
+      for (i = 1; i <= length(line); i++) {
+        c = substr(line, i, 1)
+        if (c == "\"") {
+          if (quoted && substr(line, i + 1, 1) == "\"") {
+            field = field c
+            i++
+          } else {
+            quoted = !quoted
+          }
+        } else if (c == "," && !quoted) {
+          if (number == wanted) return field
+          number++
+          field = ""
+        } else {
+          field = field c
+        }
+      }
+      if (number == wanted) return field
+      return ""
+    }
+    function header_index(header, wanted,    fields,i,total) {
+      sub(/^.*\{/, "", header)
+      sub(/\}.*/, "", header)
+      total = split(header, fields, ",")
+      for (i = 1; i <= total; i++) if (fields[i] == wanted) return i
+      return 0
+    }
+    /^help\[/ { exit }
+    /^count:/ { next }
+    /^tasks\[/ {
+      header = $0
+      hold_index = header_index($0, "hold_kind")
+      next
+    }
+    /^[[:space:]]/ {
+      if (hold_index > 0 && csv_field($0, hold_index) == "-") rows[++shown] = $0
+      next
+    }
+    { prefix[++prefix_count] = $0 }
+    END {
+      printf "count: %d\n", shown
+      for (i = 1; i <= prefix_count; i++) print prefix[i]
+      if (header != "") {
+        sub(/\[[0-9]+\]/, "[" shown "]", header)
+        print header
+        for (i = 1; i <= shown; i++) print rows[i]
+      }
+    }
+  '
 }
 
 # Bound the dispatchable-now listing without rewriting the tool's own rendering:
@@ -480,14 +700,14 @@ print_backlog_tasks_axi_compact() {
   elif ! ready=$(tasks-axi ready --file "$path" 2>&1); then
     err=$ready
   else
-    printf 'compact backlog listing (tasks-axi; done rows omitted; every in-flight, held, and blocked row shown in full; ready queued bounded to %s; task bodies omitted)\n' \
+    printf 'compact backlog listing (tasks-axi; done rows omitted; parked decisions indexed by project; unheld in-flight and blocked rows shown in full; ready queued bounded to %s; task bodies omitted)\n' \
       "$QUEUED_LIMIT"
     printf '\nin flight:\n'
-    printf '%s\n' "$in_flight" | strip_axi_help
-    printf '\nheld (captain- or time-gated; an in-flight item that is also held appears in both groups):\n'
-    printf '%s\n' "$held" | strip_axi_help
+    printf '%s\n' "$in_flight" | strip_axi_unheld
+    printf '\n'
+    print_parked_index tasks_axi "$held"
     printf '\nblocked queued:\n'
-    printf '%s\n' "$blocked" | strip_axi_help
+    printf '%s\n' "$blocked" | strip_axi_unheld
     printf '\nready queued (dispatchable now):\n'
     print_ready_queued_bounded "$ready" "$path"
     return 0
@@ -781,7 +1001,8 @@ stage read-once
 section "READ-ONCE CONTRACT"
 cat <<'EOF'
 Everything below is printed in full for this session start: every state/*.meta,
-a compact data/backlog.md listing, a bounded tail of every state/*.status,
+a compact data/backlog.md listing with held decisions reduced to project counts,
+a bounded tail of every state/*.status,
 data/projects.md, data/secondmates.md, data/captain.md, data/captain-shared.md,
 and data/learnings.md.
 Do NOT re-read any of them after reading this digest, and do NOT bulk-read
