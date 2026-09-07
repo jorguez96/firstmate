@@ -3,7 +3,7 @@
     "AGENTS.md",
     "CLAUDE.md"
   ],
-  "budgetTokens": 10000,
+  "budgetTokens": 5000,
   "skillsDir": ".agents/skills",
   "minGapEvidence": 2,
   "maxTranscripts": 100,

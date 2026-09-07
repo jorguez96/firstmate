@@ -1,9 +1,8 @@
 ---
 name: bootstrap-diagnostics
 description: >-
-  Agent-only handling playbook for session-start bootstrap diagnostics.
-  Use whenever the session-start digest's bootstrap or network-checks section prints an actionable diagnostic line - MISSING, MISSING_MANUAL, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, STARTUP_MEMORY_BUDGET, CREW_DISPATCH invalid, FLEET_SYNC, NETWORK_CHECKS, HOME_SUMMARY, BACKLOG_RECONCILE, SECONDMATE_SYNC, SECONDMATE_LIVENESS, SECONDMATE_HANDOFF, NUDGE_SECONDMATES, or FMX - or reports that an interrupted backlog cleanup may have left an endpoint or local copy, or when a standalone bin/fm-bootstrap.sh or bin/fm-startup-network.sh run prints one of those lines.
-  A silent bootstrap section, or any other BOOTSTRAP_INFO fact, means no skill load.
+  Handle actionable session-start or standalone bootstrap/network diagnostics: MISSING*, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, STARTUP_MEMORY_BUDGET, invalid CREW_DISPATCH, FLEET_SYNC, NETWORK_CHECKS, HOME_SUMMARY, BACKLOG_RECONCILE, SECONDMATE_*, NUDGE_SECONDMATES, FMX, or interrupted cleanup that may have left an endpoint or local copy.
+  Do not load for silent output or other `BOOTSTRAP_INFO` facts.
 user-invocable: false
 metadata:
   internal: true

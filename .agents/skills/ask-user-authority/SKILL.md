@@ -1,10 +1,8 @@
 ---
 name: ask-user-authority
 description: >-
-  Agent-only decision procedure for ask-user findings.
-  Use before deciding any ask-user finding.
-  This skill is the single owner of finding-decision policy: firstmate always applies judgment, decides findings that are unambiguous toward accepted intent, and escalates only genuinely ambiguous, expanding, or destructive ones.
-  Finding authority is this skill's criteria, not the project's yolo posture.
+  Load before deciding an ask-user finding.
+  Accept unambiguous findings; escalate ambiguous, expanding, or destructive ones.
 user-invocable: false
 metadata:
   internal: true

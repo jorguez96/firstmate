@@ -1,9 +1,8 @@
 ---
 name: harness-adapters
 description: >-
-  Agent-only reference for firstmate harness operations.
-  Use before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter.
-  Contains verified facts for claude, codex, opencode, pi, pi-signed, grok, kimi, cursor, and muse.
+  Load before spawn/recovery, trust, harness-specific skill invocation, lifecycle control, or adapter verification.
+  Contains verified harness facts.
 user-invocable: false
 metadata:
   internal: true
@@ -45,6 +44,7 @@ Only `FM_PI_HARNESS=pi-signed` at the launch boundary together with `PI_CODING_A
 `../../../bin/fm-harness.sh crew` resolves `config/crew-harness`, where absent or `default` means firstmate's own harness.
 `../../../bin/fm-harness.sh secondmate` resolves `config/secondmate-harness` -> `config/crew-harness` -> firstmate's own harness.
 `../../../bin/fm-spawn.sh` re-resolves on every spawn, and an explicit per-spawn argument wins for that spawn.
+Per-task model and effort choices stay on the dispatch; do not change global no-mistakes or harness defaults for one run.
 A new adapter's verified marker and command name must land in `../../../bin/fm-harness.sh`.
 
 ## Operation-to-reference matrix

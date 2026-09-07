@@ -1,8 +1,7 @@
 ---
 name: overnight
 description: >-
-  Run an overnight autonomous implementation loop for a dependency-ordered ticket series or explicit ticket list in a named project.
-  Use when the captain invokes /overnight, asks for an overnight run, requests an unattended implementation session, or says "work the tickets overnight".
+  Run an overnight ticket loop when the captain invokes `/overnight`, requests unattended implementation, or says "work the tickets overnight".
 user-invocable: true
 metadata:
   internal: true

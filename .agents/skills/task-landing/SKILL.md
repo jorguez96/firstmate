@@ -1,8 +1,7 @@
 ---
 name: task-landing
 description: >-
-  Agent-only procedure for finishing a task: PR ready signals, custom watcher checks, teardown, and scout report or promotion.
-  Load when a ship task reports its PR, before tearing a task down, before writing a custom check, and when a scout completes or is promoted to implementation.
+  Load when a ship task reports a PR, before cleanup or custom checks, or when a scout completes or is promoted.
 ---
 
 # Task landing
@@ -17,6 +16,7 @@ The ready signal depends on the selected mode.
 
 Run `bin/fm-pr-check.sh <id> <PR url>`.
 It records `pr=` and the forge's `pr_head=` when available in the task's meta, and arms the watcher's merge poll.
+Before treating a PR as ready, verify that its owner and repository exactly match the push remote.
 
 Tell the captain the PR's full `https://...` URL rather than a bare `#number`, a concise outcome summary, and the no-mistakes risk level when applicable.
 
@@ -30,6 +30,7 @@ Retire a custom check only through `bin/fm-check-unregister.sh <id>`, or `bin/fm
 ## Teardown
 
 Tear down a ship task only after landing is confirmed.
+A teardown refusal for uncommitted or unlanded work is a stop-and-investigate result, never an obstacle to bypass, and forcing it requires explicit captain discard authority.
 After successful teardown, record completion, retain only the configured recent Done history, and re-evaluate queued work whose blockers and time gates have cleared.
 
 A secondmate is persistent and an empty queue is healthy.
@@ -40,6 +41,8 @@ Its home must contain no work under way, and forced discard still requires expli
 
 A completed scout must leave a self-contained report before its scratch worktree can be discarded.
 Read and relay its findings, record the report as the Done artifact, and re-evaluate the queue.
+A scout report may recommend implementation but does not authorize it.
+Before treating an investigation or visual review as complete, load `captain-hold-lifecycle`; teardown enforces that shared completion gate.
 
 When a scout's deliverable is a visual artifact the captain will iterate on, prefer keeping that scout alive to host its own Lavish loop rather than tearing it down and mediating from firstmate, so the scout keeps its investigation context and the captain iterates in one continuous session.
 
