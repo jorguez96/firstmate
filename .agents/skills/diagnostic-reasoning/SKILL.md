@@ -1,9 +1,8 @@
 ---
 name: diagnostic-reasoning
 description: >-
-  Agent-only procedure for diagnosing reported bugs.
-  Use before scoping a reported bug and before acting on a diagnostic report.
-  Owns end-user-aligned reproduction, causal separation, divergent-path and history inspection, counterfactual testing, and disconfirming evidence.
+  Load before scoping a reported bug or acting on a diagnostic report.
+  Owns reproduction, causal separation, divergent paths, counterfactuals, and disconfirming evidence.
 user-invocable: false
 metadata:
   internal: true
@@ -51,3 +50,6 @@ Before acting on the report, verify that its claimed cause explains the end-user
 If a load-bearing element is missing, route a focused follow-up investigation instead of treating confidence or implementation detail as proof.
 A diagnosis or implementation-ready recommendation is evidence, not authorization to change code.
 Implementation still requires the captain's request or another existing lifecycle authority, and the reproduction should become the regression test when a fix is authorized.
+
+Treat exact arithmetic reconciliation as supporting evidence only; label the mechanism unconfirmed until an authoritative source verifies it.
+Before endorsing a timeout increase, rerun the same benchmark on the current baseline and candidate in the authoritative environment and verify that the producing commit still exists.

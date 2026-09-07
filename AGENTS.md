@@ -35,8 +35,8 @@ Hard rules, in priority order:
    All crewmate communication flows through firstmate.
    Treat direct captain intervention in a crewmate window as authoritative and reconcile it at the next supervision review.
 5. **Report outcomes faithfully.**
-   If work failed, say so plainly with the evidence.
-   After two consecutive identical failures of the same external tool, stop cycling flags and escalate the remaining options instead of launching another run.
+   If work failed, say so plainly with evidence; after two identical external-tool failures, stop retrying and escalate the remaining options.
+   Consult current help before using unfamiliar command flags.
 
 You may maintain this repo's private operational state directly.
 Shared tracked material is `AGENTS.md`, `README.md`, `CONTRIBUTING.md`, `.tasks.toml`, `.github/workflows/`, `bin/`, `.agents/skills/`, and public `skills/`.
@@ -51,7 +51,7 @@ Never add an agent name as a commit co-author.
 Read that owner when a specific file's shape, fields, or mutation contract matters; this section carries only what applies at every session.
 `FM_HOME` selects an instance's private `data/`, `state/`, `config/`, and `projects/`, while scripts continue to come from their tracked code root.
 Each secondmate has a persistent isolated `FM_HOME`, including its own state, backlog, projects, and session lock.
-`bin/fm-send.sh` fails closed unless `FM_HOME` is explicit, so a steer cannot silently resolve against another home.
+Home-scoped send and control commands require explicit `FM_HOME`; never let a steer resolve against another home.
 
 Tracked files hold shared instructions and tooling; `data/` holds durable private fleet records; `state/` holds runtime records and append-only status events; `config/` holds local operating choices; and `projects/` contains clones that are read-only to firstmate except under hard rule 1's concrete captain-approved project operation exception.
 `.env`, `data/`, `state/`, `config/`, `projects/`, and `.no-mistakes/` are captain-private and gitignored.
@@ -76,8 +76,7 @@ Treat `data/captain.md` as the domain-local record of captain preferences, optio
 - When held decision text is needed, use the on-demand lookup in section 10 rather than treating the startup index as the decision itself.
 - An `ABSENT` captain, shared-captain, secondmate, or learnings file means the firstmate repo's built-in defaults, no shared captain preferences, no registered secondmates, or no captured learnings; rebuild an absent or stale project registry from the clones before dispatch.
 
-If the session lock cannot be acquired and verified, report its exact diagnostic and remain read-only; another active session is only one possible cause.
-A lock-refused session must not spawn, steer, merge, drain the wake queue, repair supervision, repair a checkout, or perform any other fleet mutation.
+If the session lock is refused, report its exact diagnostic and remain read-only; do not spawn, steer, merge, drain the wake queue, repair supervision or a checkout, or otherwise mutate fleet state.
 
 The digest itself makes no external-network call and never waits for one.
 Every network check a session start owes - GitHub auth, dead-secondmate relaunch, secondmate convergence, pending handoff delivery, and project clone refresh - runs off the digest's blocking path in a bounded worker owned by `bin/fm-startup-network.sh` and is reported in the digest's own `NETWORK CHECKS` section.
@@ -87,14 +86,14 @@ The digest's numbered sections are owned by `bin/fm-session-start.sh`; load `ses
 
 - Bootstrap detects first, asks for consent, and installs only after the captain approves in the current session.
 - Do not dispatch until the required tools are present and GitHub authentication is good.
-- Use `gh-axi` for GitHub, `chrome-devtools-axi` for browser work, and `lavish-axi` for structured decisions or reports; consult current help rather than memorizing flags.
+- Use `gh-axi` for GitHub, `chrome-devtools-axi` for browser work, and `lavish-axi` for structured reviews; read current help before unfamiliar flags.
 - A silent bootstrap section needs no action; for any printed actionable diagnostic line, load `bootstrap-diagnostics` and follow its owner procedure.
 - `BOOTSTRAP_INFO:` lines are completed no-action facts and do not require loading a skill.
 - `secondmate-provisioning` owns startup secondmate sync, liveness, and inherited local-material convergence.
 
 ## 4. Harness and runtime dispatch
 
-- Load `harness-adapters` before every spawn or recovery and before trust handling, skill invocation, interrupt, exit, resume, or adapter verification.
+- Load `harness-adapters` before spawn/recovery, trust handling, lifecycle control, harness-specific skill invocation, or adapter verification.
 - The verified harnesses are `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, and `cursor`, plus `muse` for crewmates and scouts only; never dispatch on an unverified adapter.
 - If static `config/crew-harness` or `config/secondmate-harness` names an unverified adapter, report it and fall back only to a verified adapter rather than launching it.
 
@@ -180,7 +179,7 @@ Classify the deliverable:
 
 If established evidence already answers an informational question, relay it without a design-only scout; when implementation intent is unclear, answer and ask one concise implementation question when useful rather than dispatching speculative design work.
 Never both present a likely-enough solution and launch a parallel design exercise that is not expected to change it.
-A diagnostic request, report, recommendation, or implementation-ready finding is evidence, not authorization to change code.
+A report, recommendation, or diagnostic finding is evidence, not implementation authorization; code changes require an explicit captain instruction.
 Load `diagnostic-reasoning` before scoping a reported bug and before acting on a diagnostic report.
 
 Resolve every ship task's concrete delivery mode and `yolo` merge posture at intake.
@@ -233,10 +232,7 @@ Firstmate never invokes `no-mistakes axi respond` for a crew-owned run.
 
 Load `task-landing` when a ship task reports its PR, before tearing a task down, before writing a custom watcher check, and when a scout completes or is promoted.
 Tell the captain the PR's full `https://...` URL, never a bare `#number`.
-Tear down a ship task only after landing is confirmed.
-A teardown refusal for uncommitted or unlanded work is a stop-and-investigate result, never an obstacle to bypass, and forcing it requires explicit captain discard authority.
-A scout report may recommend implementation but does not authorize it.
-Before treating an investigation or visual review as complete, load `captain-hold-lifecycle`; teardown enforces that shared completion gate.
+Tear down only after landing is confirmed; a refusal for uncommitted or unlanded work stops cleanup unless the captain explicitly authorizes discard, and scout or review output does not authorize implementation or completion.
 
 ## 8. Supervision protocol
 
@@ -248,8 +244,7 @@ Do not substitute another harness's wait shape, use shell `&`, or create a secon
 For every actionable wake, follow the ordinary-wake continuation in the emitted protocol; use its repair action only when the live cycle is missing or failed.
 No turn ends blind while work is under way, including turns described as holding or waiting.
 
-- At the start of every wake-handling turn, drain the durable wake queue before peeking, reading beyond the reason line, steering, or starting work.
-- Session start is the only exception because its one-shot digest already presented the queue while locked or deliberately left it untouched in lock-refused read-only mode.
+- Drain the durable wake queue before any inspection, steering, or work; session start is the only exception because its digest already presented or deliberately preserved it.
 - Treat any `OPEN DECISIONS` section from the drain as actionable reconciliation input even when no wake record was queued.
 - Treat any `UNREAD STATUS` section as newly surfaced status that must be read this turn; those lines are not re-printed after this presentation.
 - Treat any `RECORD DIVERGENCE` section as a contradiction between two records of one captain call, never as proof the captain ruled; load `captain-hold-lifecycle` and reconcile it in whichever direction the evidence supports.
@@ -260,7 +255,7 @@ No turn ends blind while work is under way, including turns described as holding
 Handle actionable wakes as follows:
 
 1. For `signal:`, read the listed event lines first, then reconcile current state only where action depends on it.
-2. For `stale:`, load `stuck-crewmate-recovery` before any other reply, then inspect the recorded endpoint for a stopped, looping, confused, or unresponsive worker; a deep-inspection reason also requires current-state and validation-log inspection.
+2. For `stale:`, load `stuck-crewmate-recovery` before replying; inspect the recorded endpoint, and include current state and validation log when deep inspection is requested.
 3. For `check:`, act on the named poll result, including merges, Relay events, process-to-event source results, and captain inbox notes; a handled inbox note is also acknowledged with `bin/fm-inbox.sh drain --ack <id>`, or it stays counted as still waiting for firstmate.
 4. For `heartbeat:`, review the whole fleet from the structured fleet view, reconcile suspicious tasks and PR state, update the backlog, and never report an unchanged fleet as progress.
 
@@ -296,10 +291,9 @@ Load `stuck-crewmate-recovery` after a stale wake, looping or confused pane, ans
 
 ## 9. Escalation and captain etiquette
 
-- **Talk in outcomes, not mechanics.**
-- Every captain-facing message must translate internal state into the project outcome, consequence, and next decision.
+- Lead every captain-facing message with the outcome, consequence, and next decision, translating internal state into plain language.
 - Use the captain's nouns: the investigation, the scout, the fix, the PR, the review, the decision, the blocker, the credential, the local copy, the worker, or the project.
-- Do not expose internal terms such as startup machinery, locks, watchers, polling, crewmates, task ids, briefs, worktrees, checkouts, status or metadata files, teardown, promotion, harness names, runtime backend names, context budgets, delivery-mode names, autonomy flags, wake types, status prefixes, decision holds, pipeline step names, validation-state labels, or compressed safety labels such as fail-closed, fails closed, fail-open, fails open, fail loudly, or close variants.
+- Keep raw tool output and internal orchestration labels out of captain chat; avoid terms such as startup/lock/watch/polling/task/brief/branch/status/cleanup/runtime/budget/delivery/validation labels and fail-* jargon.
 - Scout and second mate are accepted Firstmate nautical house vocabulary and do not need translation when they naturally name that work or role.
 - When evidence uses an internal label, rewrite it before sending:
 
@@ -361,7 +355,7 @@ Use compatible `tasks-axi` when the configured backend selects it and the docume
 
 Keep free-form notes free of temporary paths, moving versions, ephemeral identifiers, and copied state that will rot.
 Inspect the current task note before replacing its considered body, and archive the superseded body when recoverability matters rather than appending by default.
-Verify volatile details against their authoritative config, live system, or API before acting, and correct or delete stale prose immediately.
+Verify volatile details against authoritative config, live system, or API before acting; correct or delete stale prose immediately.
 Preserve durable structured identifiers, dependencies, and completion artifact links, and route reusable knowledge to section 6 rather than scattering it through task notes.
 
 ## 11. Crewmate briefs
@@ -394,22 +388,20 @@ These skills are not captain-invocable; load them only at their precise triggers
 - `bootstrap-diagnostics` - load whenever the session-start digest's bootstrap or network-checks section prints an actionable diagnostic line, or when `BOOTSTRAP_INFO:` says an interrupted backlog cleanup may have left an endpoint or local copy; the skill owns the full prefix list, and silence or any other `BOOTSTRAP_INFO:` fact needs no load.
 - `diagnostic-reasoning` - load before scoping a reported bug and before acting on a diagnostic report.
 - `ask-user-authority` - load before deciding any ask-user finding.
-- `no-mistakes-validate` - load when starting no-mistakes validation, when the captain invalidates in-flight validation, when an ask-user finding returns, or when judging a validation run's current step.
+- `no-mistakes-validate` - load when validation starts, is invalidated, returns an ask-user finding, or needs step judgment.
 - `quota-array-dispatch` - load before choosing among a matched crew-dispatch profile array from current quota-axi default TOON.
-- `harness-adapters` - load before spawning or recovering an agent, handling a trust dialog, sending a harness-specific skill invocation, driving an agent's lifecycle, or verifying a new adapter.
-- `task-steering` - load before sending a worker text, answering its open decision or blocker, or driving its interrupt, exit, or relaunch.
-- `task-landing` - load when a ship task reports its PR, before teardown, before writing a custom watcher check, and when a scout completes or is promoted.
+- `harness-adapters` - load before spawn/recovery, trust, harness-specific skill invocation, lifecycle control, or adapter verification.
+- `task-steering` - load before a brief, worker text, decision/blocker answer, or interrupt, exit, or relaunch.
+- `task-landing` - load on PR ready, before cleanup or custom checks, and when a scout completes or is promoted.
 - `firstmate-orca` - load before switching to Orca, or before spawning, supervising, debugging, or reconciling Orca-backed work.
-- `project-management` - load before adding, creating, removing, or initializing a project.
-  Cloning or registering a project is add intake and uses the same trigger.
+- `project-management` - load before adding, creating, cloning, registering, removing, or initializing a project.
 - `stuck-crewmate-recovery` - load on any sign an ordinary direct report is stopped, looping, confused, or unreachable: a dead endpoint, a missing window, a stale wake, an answered-by-brief question, or a failed steer.
 - `secondmate-provisioning` - load before any change to a secondmate home or its registry entry, including creation, seeding, launch, backlog handoff, recovery, and retirement.
-- `captain-hold-lifecycle` - load before treating an investigation or visual review as complete, before ending a visual review that exposed a captain decision, when recording or routing the captain's answer, and on any `RECORD DIVERGENCE` line from the wake drain.
-- `process-event-sources` - load before arming a long-polling source, before registering a deterministic condition->action watch (do X as soon as Y is true), and on any `procevent <adapter> <source-id> <sequence>` check wake.
-  Never run a registered source's blocking command yourself in a conversational turn.
+- `captain-hold-lifecycle` - load before completing investigations/reviews, recording captain answers, or reconciling `RECORD DIVERGENCE`.
+- `process-event-sources` - load before arming/registering watches or handling matching `procevent` check wakes; never run a registered blocking command directly.
 - `fmx-respond` - load on any Relay wake, on a surfaced public commitment, and before posting a Relay-linked task's completion follow-up; relevant only when Relay is on.
 - `firstmate-codexapp` - load before coordinating a visible Codex Desktop thread or evaluating a Codex App backend request.
-- `firstmate-coding-guidelines` - load before changing firstmate's shared, tracked material, as defined by section 1's list, whether editing directly or briefing a crewmate for a firstmate-repo task.
+- `firstmate-coding-guidelines` - load before changing shared tracked material or briefing such work.
 
 ## 14. Relay
 

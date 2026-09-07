@@ -1,6 +1,7 @@
 ---
 name: session-start-digest
-description: >- Agent-only map of the seven session-start digest sections. Load when a printed session-start section is unclear or when acting on Lock, Bootstrap, Wake queue, Supervision operating instructions, Fleet-state, Network checks, or Context digest output.
+description: >-
+  Load when a session-start digest section is unclear or when acting on Lock, Bootstrap, Wake queue, Supervision, Fleet-state, Network checks, or Context output.
 user-invocable: false
 metadata:
   internal: true

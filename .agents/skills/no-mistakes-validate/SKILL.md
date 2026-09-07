@@ -1,6 +1,7 @@
 ---
 name: no-mistakes-validate
-description: >- Agent-only no-mistakes validation procedure after a ship implementation commit. Load when starting no-mistakes validation, when the captain invalidates in-flight validation, when an ask-user finding returns, or when judging a validation run's current step.
+description: >-
+  Load after a no-mistakes ship implementation commit when validation starts, is invalidated, returns an ask-user finding, or needs step judgment.
 user-invocable: false
 metadata:
   internal: true

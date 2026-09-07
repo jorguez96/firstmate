@@ -1,8 +1,7 @@
 ---
 name: task-steering
 description: >-
-  Agent-only mechanics for handing work to a live crewmate or secondmate and steering it afterwards.
-  Load before sending a worker text, answering an open decision or blocker, or driving a worker's interrupt, exit, or relaunch.
+  Load before writing a brief, sending worker text, answering an open decision or blocker, or driving interrupt, exit, or relaunch.
 ---
 
 # Task steering
@@ -27,6 +26,8 @@ After an unconfirmed delivery, only the exact `FM_PENDING_REPLY_EXISTING_CORR=<i
 For the parent-owned correlation, recovery, and escalation contract on marked secondmate requests, see `bin/fm-pending-reply-lib.sh`.
 
 When a steer answers an open keyed decision or blocker, pass `fm-send`'s `--resolve-key` so the answer itself closes that decision record at answer time, identically for local and remote workers (contract: `bin/fm-send.sh` header).
+
+If a steer is refused because another actor holds the task lease, wait for that lease to release and retry the same message rather than dropping it.
 
 ## Lifecycle control is a separate plane
 
