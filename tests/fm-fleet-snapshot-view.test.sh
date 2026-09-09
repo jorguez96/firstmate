@@ -262,6 +262,36 @@ EOF
   pass "main_inventory discloses orphan/unstructured and clears when inventory is consistent"
 }
 
+# The main snapshot can receive a backlog whose normalized JSON exceeds Linux's
+# per-argument limit even when no individual record is unusually large.
+test_large_backlog_snapshot_avoids_jq_argument_overflow() {
+  local home output
+  home=$(make_home large-backlog)
+  python3 - "$home/data/backlog.md" <<'PY'
+import sys
+
+with open(sys.argv[1], "w") as handle:
+    handle.write("## In flight\n")
+    for index in range(3000):
+        handle.write("accumulated current note %04d %s\n" % (index, "x" * 200))
+    handle.write("\n## Queued\n\n## Done\n")
+PY
+  [ "$(wc -c < "$home/data/backlog.md")" -gt 524288 ] \
+    || fail "large backlog fixture did not exceed the argument-overflow threshold"
+  output="$TMP_ROOT/large-backlog-snapshot.json"
+  FM_HOME="$home" "$SNAPSHOT" --json > "$output" \
+    || fail "snapshot failed on a large accumulated backlog"
+  jq -e '
+    .schema == "fm-fleet-snapshot.v1"
+      and (.backlog.records | length) == 3000
+      and .main_inventory.valid == false
+      and .main_inventory.reason == "unstructured current backlog row"
+      and .main_inventory.unstructured_current_count == 3000
+  ' "$output" >/dev/null \
+    || fail "large accumulated backlog did not produce a complete inventory snapshot"
+  pass "large accumulated backlog feeds jq without argument overflow"
+}
+
 test_normalized_roles_and_plural_blocker_readiness() {
   local home fakebin out
   home=$(make_home normalized-records)
@@ -802,6 +832,7 @@ test_parked_scout_decision_stays_pending() {
 test_empty_fleet_json
 test_fixture_snapshot_json
 test_main_inventory_orphan_and_unstructured_disclosure
+test_large_backlog_snapshot_avoids_jq_argument_overflow
 test_normalized_roles_and_plural_blocker_readiness
 test_event_hints_follow_reconciled_current_state
 test_open_decision_survives_later_unrelated_event

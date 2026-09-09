@@ -90,6 +90,61 @@ EPOCH_TWO=1787911260
 NOW_THREE=2026-08-28T10:02:00Z
 EPOCH_THREE=1787911320
 
+ORDER_HOME="$TMP_ROOT/order-home"
+mkdir -p "$ORDER_HOME/state" "$ORDER_HOME/data" "$ORDER_HOME/config" "$ORDER_HOME/projects"
+printf '# Seeded Firstmate home\n' > "$ORDER_HOME/AGENTS.md"
+cat > "$ORDER_HOME/data/backlog.md" <<'EOF'
+## In flight
+
+## Queued
+
+## Done
+- [x] prior-task - Prior task (repo: firstmate) (kind: ship) (merged 2026-08-27)
+EOF
+env -u FM_SNAPSHOT_SECONDMATE_LANDED_PER_HOME \
+  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$ORDER_HOME" \
+  "$SNAPSHOT" --secondmate-home-summary > "$TMP_ROOT/order-summary.json" \
+  || fail "secondmate summary failed when its landed bound was not preset"
+jq -e --arg home "$ORDER_HOME" '
+  .schema == "fm-secondmate-home-summary.v1"
+    and .home == $home
+    and (.landed | length) == 1
+    and .counts.landed == 1
+' "$TMP_ROOT/order-summary.json" >/dev/null \
+  || fail "secondmate summary did not initialize its landed bound before rendering"
+pass "secondmate summary initializes its landed bound before use"
+
+LARGE_SUMMARY_HOME="$TMP_ROOT/large-summary-home"
+mkdir -p "$LARGE_SUMMARY_HOME/state" "$LARGE_SUMMARY_HOME/data" \
+  "$LARGE_SUMMARY_HOME/config" "$LARGE_SUMMARY_HOME/projects"
+printf '# Seeded Firstmate home\n' > "$LARGE_SUMMARY_HOME/AGENTS.md"
+python3 - "$LARGE_SUMMARY_HOME/data/backlog.md" <<'PY'
+import sys
+
+with open(sys.argv[1], "w") as handle:
+    handle.write("## In flight\n")
+    for index in range(3000):
+        handle.write("accumulated current note %04d %s\n" % (index, "x" * 200))
+    handle.write("\n## Queued\n\n## Done\n")
+PY
+[ "$(wc -c < "$LARGE_SUMMARY_HOME/data/backlog.md")" -gt 524288 ] \
+  || fail "large summary fixture did not exceed the argument-overflow threshold"
+FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$LARGE_SUMMARY_HOME" \
+  FM_HOME_SUMMARY_TIMEOUT=30 "$WRITER" > "$TMP_ROOT/large-summary.out" \
+  2> "$TMP_ROOT/large-summary.err" \
+  || fail "large accumulated home-summary publication failed: $(tail -n 5 "$TMP_ROOT/large-summary.err")"
+[ -s "$LARGE_SUMMARY_HOME/state/home-summary.json" ] \
+  || fail "large accumulated home-summary publication did not create its ledger"
+jq -e --arg home "$LARGE_SUMMARY_HOME" '
+  .schema == "fm-secondmate-home-summary.v1"
+    and .home == $home
+    and .valid == false
+    and .invalidity.kind == "unstructured_current"
+    and .counts.active_children == 0
+' "$LARGE_SUMMARY_HOME/state/home-summary.json" >/dev/null \
+  || fail "large accumulated home-summary publication was incomplete"
+pass "large accumulated home-summary publication succeeds through the real writer"
+
 run_writer() {  # <now> <epoch> [writer args...]
   local now=$1 epoch=$2
   shift 2
