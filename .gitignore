@@ -21,3 +21,5 @@ config/
 .pi/npm/
 # Pi writes project-local Git package clones here.
 .pi/git/
+
+.tools/
