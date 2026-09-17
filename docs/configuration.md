@@ -533,6 +533,22 @@ The sweep must finish inside `FM_CHECK_TIMEOUT` (default 30), because a run the 
 So a budget larger than that timeout allows is cut down to what fits instead of being refused, and the cut is reported in the report line.
 A budget that is not a whole number from 1 to 120 is still refused outright.
 
+## Automatic upstream sync (bin/fm-upstream-sync.sh)
+
+This fork carries its own commits on top of an older upstream base, so the sync merges upstream in rather than fast-forwarding onto it.
+Upstream is fetched from the `upstream` remote and the fork's `main` tracks `origin`.
+The sync lands upstream into `origin/main`, after which homes advance through the guarded fast-forward they already run, so no second updater is involved.
+`bin/fm-upstream-sync.sh` owns all merge mechanics, verification gating, and push discipline.
+A sync lands on its own if and only if the upstream merge is conflict-free AND verification is green (`bin/fm-lint.sh` plus the affected test files).
+Anything else arrives as a pull request for the captain instead and never auto-lands.
+The automation never force-pushes, never rebases landed fork commits, never touches a dirty checkout, and never commits secrets.
+`check` prints one line when `origin/main` sits behind `upstream/main` and stays silent when current, so it composes with the watcher state-check contract.
+Arm it once per home with `bin/fm-upstream-sync.sh arm`.
+That writes `state/upstream-sync.check.sh` and binds its bytes with `bin/fm-check-register.sh`, so the existing watcher polls it on its normal cadence and turns its one line into a `check:` wake.
+`bin/fm-upstream-sync.sh disarm` removes the shim and its trust binding.
+Live auto-landing stays OFF until the captain turns it on for a run with BOTH `FM_UPSTREAM_SYNC_AUTO_LAND=1` in the environment AND `sync --allow-auto-land` on the command line.
+`sync --dry-run` proves clean-merge detection, green verification gating, and the conflict path against the real upstream remote without pushing or opening anything.
+
 ## Relay (.env)
 
 Relay lets a firstmate instance answer public mentions and act on normal reversible mention requests through firstmate's normal lifecycle.
