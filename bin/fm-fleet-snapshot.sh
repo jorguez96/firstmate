@@ -2020,7 +2020,7 @@ secondmate_current_json "$TASKS_JSON_FILE" "$SECONDMATE_CURRENT_JSON_FILE" \
 secondmate_landed_from_current_json "$SECONDMATE_CURRENT_JSON_FILE" "$SECONDMATE_LANDED_JSON_FILE" \
   || { echo "fm-fleet-snapshot: secondmate landed projection failed" >&2; exit 1; }
 
-jq -s \
+jq -sn \
   --arg generated "$SNAPSHOT_NOW" \
   --arg fm_home "$FM_HOME" \
   --arg fm_root "$FM_ROOT" \
@@ -2059,10 +2059,4 @@ jq -s \
      secondmate_guidance:{
        note:"For kind=secondmate, bearings selects validated structured state from that registered home; parent events and bounded terminal evidence are fallback-only supplements and never current-state authority."
      }
-   }' < <(printf '%s\n' \
-    "$BACKLOG_JSON" \
-    "$TASKS_JSON" \
-    "$MAIN_INVENTORY_JSON" \
-    "$SCOUT_REPORTS_JSON" \
-    "$SECONDMATE_CURRENT_JSON" \
-    "$SECONDMATE_LANDED_JSON")
+   }'
