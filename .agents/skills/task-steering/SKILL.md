@@ -29,6 +29,12 @@ When a steer answers an open keyed decision or blocker, pass `fm-send`'s `--reso
 
 If a steer is refused because another actor holds the task lease, wait for that lease to release and retry the same message rather than dropping it.
 
+## Changed asks mid-task
+
+When the captain adds or changes an ask mid-task, append the captain's words without added speaker labels or direct address to that brief's `## Captain's intent` and relay those words to the worker.
+Firstmate build constraints stay in `## Firstmate spec` or the steer.
+`bin/fm-dod-lib.sh` owns the worker-side `--intent` contract.
+
 ## Lifecycle control is a separate plane
 
 `fm-send` is the data plane for text the worker should read.
