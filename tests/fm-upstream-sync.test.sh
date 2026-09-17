@@ -181,11 +181,86 @@ SH
   pass "live default opens PR without landing"
 }
 
+test_dryrun_conflict_previews_issue_and_creates_nothing() {
+  local w out status=0 base upstream before_refs after_refs fakebin log
+  w=$(new_world dryrun-conflict-preview 0)
+  wire_fork_conflict "$w"
+  diverge_upstream "$w" conflict
+  base=$(git -C "$w/fork" rev-parse origin/main)
+  git -C "$w/fork" fetch upstream main --quiet 2>/dev/null
+  upstream=$(git -C "$w/fork" rev-parse upstream/main)
+  fakebin=$(fm_fakebin "$w")
+  log="$w/gh-log"
+  cat > "$fakebin/gh-axi" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> '$log'
+printf 'https://example.invalid/issue/1\n'
+SH
+  chmod +x "$fakebin/gh-axi"
+  before_refs=$(git -C "$w/fork" ls-remote origin)
+  out=$(env FM_HOME="$w/home" FM_UPSTREAM_SYNC_INTERVAL=0 PATH="$fakebin:$PATH" "$SYNC" sync --repo "$w/fork" --dry-run 2>&1) || status=$?
+  expect_code 0 "$status" "conflict dry-run exit"
+  assert_contains "$out" "conflicts in:" "dry-run reports the conflict path"
+  assert_contains "$out" "file.txt" "dry-run names the conflicting file"
+  assert_contains "$out" "dry-run, opened nothing" "conflict dry-run opens nothing"
+  assert_contains "$out" "would open tracking issue" "dry-run previews the reviewable artifact"
+  assert_contains "$out" "$base" "dry-run prints the exact base SHA"
+  assert_contains "$out" "$upstream" "dry-run prints the exact upstream SHA"
+  after_refs=$(git -C "$w/fork" ls-remote origin)
+  assert_equals "$before_refs" "$after_refs" "dry-run pushes no branch"
+  assert_absent "$log" "dry-run never calls gh-axi"
+  pass "dry-run conflict previews issue and creates nothing"
+}
+
+test_live_conflict_opens_issue_without_branch() {
+  local w out status=0 base upstream before_main after_main before_refs after_refs fakebin log
+  w=$(new_world live-conflict 0)
+  wire_fork_conflict "$w"
+  diverge_upstream "$w" conflict
+  base=$(git -C "$w/fork" rev-parse origin/main)
+  git -C "$w/fork" fetch upstream main --quiet 2>/dev/null
+  upstream=$(git -C "$w/fork" rev-parse upstream/main)
+  fakebin=$(fm_fakebin "$w")
+  log="$w/gh-log"
+  cat > "$fakebin/gh-axi" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> '$log'
+prev=""
+for a in "\$@"; do
+  if [ "\$prev" = "--body-file" ]; then
+    cat "\$a" >> '$log'
+  fi
+  prev="\$a"
+done
+printf 'https://example.invalid/issue/1\n'
+SH
+  chmod +x "$fakebin/gh-axi"
+  before_main=$(git -C "$w/fork" rev-parse origin/main)
+  before_refs=$(git -C "$w/fork" ls-remote origin)
+  out=$(env FM_HOME="$w/home" FM_UPSTREAM_SYNC_INTERVAL=0 PATH="$fakebin:$PATH" "$SYNC" sync --repo "$w/fork" 2>&1) || status=$?
+  expect_code 0 "$status" "live conflict exit"
+  assert_contains "$out" "conflicts in:" "live conflict reports the conflict path"
+  assert_contains "$out" "tracking issue" "live conflict arrives reviewable instead of failing"
+  after_main=$(git -C "$w/fork" rev-parse origin/main)
+  assert_equals "$before_main" "$after_main" "origin/main never advances on conflict"
+  after_refs=$(git -C "$w/fork" ls-remote origin)
+  assert_equals "$before_refs" "$after_refs" "conflict path never pushes a branch, so it never pushes zero-commit branches"
+  assert_present "$log" "fake gh-axi saw the issue request"
+  assert_grep "issue create" "$log" "live conflict opens a tracking issue"
+  assert_no_grep "pr create" "$log" "live conflict never attempts a pull request"
+  assert_grep "file.txt" "$log" "issue carries the conflict-file list"
+  assert_grep "$base" "$log" "issue carries the exact base SHA"
+  assert_grep "$upstream" "$log" "issue carries the exact upstream SHA"
+  pass "live conflict opens issue without branch"
+}
+
 test_check_reports_when_behind
 test_check_silent_when_current
 test_dryrun_clean_green_lands_nothing
 test_dryrun_red_verification_refuses_land
 test_dryrun_conflict_names_files
+test_dryrun_conflict_previews_issue_and_creates_nothing
+test_live_conflict_opens_issue_without_branch
 test_dirty_checkout_refused
 test_live_default_opens_pr_without_landing
 
