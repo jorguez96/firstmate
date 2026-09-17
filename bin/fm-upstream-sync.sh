@@ -9,8 +9,9 @@
 # fork's own merge into origin/main and never a second home updater.
 # Standing sync-merge authority (captain, 2026-09-17, bounded to this automation
 # only): a sync lands on its own if and only if the upstream merge is
-# conflict-free AND verification is green, and anything else arrives as a pull
-# request for the captain instead and never auto-lands.
+# conflict-free AND verification is green, and anything else arrives for the
+# captain instead (verification-red as a pull request, conflicts as a tracking
+# issue) and never auto-lands.
 # Red merges never land under any setting.
 # The script never force-pushes, never rebases landed fork commits, never touches
 # a dirty checkout, and never commits secrets.
@@ -28,9 +29,11 @@
 # nothing when current, so it composes with the watcher state-check contract.
 # `sync --dry-run` proves clean-merge detection, green verification gating, and
 # the conflict path against the real upstream remote without pushing or opening
-# anything.
+# anything, while printing the exact tracking-issue artifact it would open.
 # A live `sync` without auto-land opens a pull request with gh-axi instead of
-# landing, and states in its body exactly what enables auto-landing.
+# landing (conflicts open a tracking issue instead, because a branch with zero
+# new commits cannot open a pull request), and states in its body exactly what
+# enables auto-landing.
 # Auto-landing additionally requires FM_UPSTREAM_SYNC_AUTO_LAND=1 in the
 # environment alongside --allow-auto-land, so one flag alone never lands.
 # `arm` writes state/upstream-sync.check.sh and binds its bytes with
@@ -204,7 +207,7 @@ pr_body_enablement() {
   cat <<'EOF'
 ## Enabling auto-landing
 
-This sync arrived as a pull request because live auto-landing is OFF.
+This sync arrived for review because live auto-landing is OFF.
 Auto-landing engages only when BOTH hold for the same run:
 
 - `FM_UPSTREAM_SYNC_AUTO_LAND=1` is present in the automation environment, AND
@@ -212,7 +215,7 @@ Auto-landing engages only when BOTH hold for the same run:
 
 One flag alone never lands.
 The captain's standing authority (2026-09-17, bounded to this automation only) covers a self-landing merge if and only if the upstream merge is conflict-free AND verification is green (`bin/fm-lint.sh` plus the affected test files).
-Merge conflicts, red verification, a dirty checkout, secrets in the diff, or anything destructive or irreversible always arrives as a pull request instead and never auto-lands.
+Merge conflicts, red verification, a dirty checkout, secrets in the diff, or anything destructive or irreversible always arrives for review instead (verification-red as a pull request, conflicts as a tracking issue) and never auto-lands.
 Red merges never land under any setting.
 EOF
 }
@@ -226,6 +229,15 @@ open_pr() {
     return 0
   fi
   gh-axi pr create --title "$title" --body-file "$body_file" --base "$base_branch" --head "$head_branch"
+}
+
+open_issue() {
+  local title=$1 body_file=$2
+  if ! command -v gh-axi >/dev/null 2>&1; then
+    printf 'issue: gh-axi is unavailable; manual review needed for %s\n' "$title"
+    return 0
+  fi
+  gh-axi issue create --title "$title" --body-file "$body_file"
 }
 
 cmd_sync() {
@@ -264,22 +276,23 @@ cmd_sync() {
   fi
   if [ -n "$conflicts" ]; then
     printf 'upstream sync: conflicts in:\n%s\n' "$conflicts"
-    printf 'upstream sync: refusing to land; opening a pull request for the captain instead\n'
+    printf 'upstream sync: refusing to land; opening a tracking issue for the captain instead\n'
+    printf 'upstream sync: base %s upstream %s behind %s\n' "$base" "$upstream_head" "$n"
     if [ "$dry" -eq 1 ]; then
       printf 'upstream sync: dry-run, opened nothing\n'
+      printf 'upstream sync: dry-run, would open tracking issue: chore(sync): upstream/main is %s ahead (conflicts need review)\n' "$n"
       return 0
     fi
-    branch="fm/upstream-sync-$(date +%Y%m%d-%H%M%S)"
-    git -C "$repo" branch "$branch" "$base" --quiet 2>&1 || die "error: cannot make sync branch" 1
-    git -C "$repo" push origin "$branch" 2>&1 || die "error: cannot push sync branch" 1
-    body=$(mktemp "${TMPDIR:-/tmp}/fm-upstream-sync-body.XXXXXX") || die "error: cannot make PR body" 1
+    body=$(mktemp "${TMPDIR:-/tmp}/fm-upstream-sync-body.XXXXXX") || die "error: cannot make issue body" 1
     {
       printf 'Upstream sync needs the captain: upstream/main is %s ahead and the merge conflicts.\n\n' "$n"
+      printf 'base: %s\nupstream: %s\nbehind: %s\n\n' "$base" "$upstream_head" "$n"
       fence='```'
       printf 'Conflicting files:\n\n%s\n%s\n%s\n\n' "$fence" "$conflicts" "$fence"
+      printf 'Resolve by merging upstream/main into a local branch from %s, fixing the files above, running bin/fm-lint.sh plus the affected test files, and opening a pull request.\n\n' "$base"
       pr_body_enablement
     } > "$body"
-    open_pr "chore(sync): upstream/main is $n ahead (conflicts need review)" "$body" "$branch"
+    open_issue "chore(sync): upstream/main is $n ahead (conflicts need review)" "$body"
     rm -f "$body"
     return 0
   fi
