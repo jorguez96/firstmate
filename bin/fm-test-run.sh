@@ -529,6 +529,7 @@ tests/fm-cursor-harness.test.sh 30071
 tests/fm-cursor-primary-live-e2e.test.sh 20
 tests/fm-cursor-primary.test.sh 52324
 tests/fm-daemon.test.sh 25834
+tests/fm-dispatch-resolve.test.sh 1800
 tests/fm-documentation-audiences.test.sh 642
 tests/fm-fleet-snapshot-view.test.sh 6995
 tests/fm-fleet-sync.test.sh 20194
@@ -1143,12 +1144,22 @@ families_for_changed_path() {
       printf '%s\n' session-bootstrap
       printf '%s\n' "__script__:fm-procevent-quota.test.sh"
       printf '%s\n' "__script__:fm-quota-choose.test.sh"
+      printf '%s\n' "__script__:fm-dispatch-resolve.test.sh"
       ;;
     bin/fm-procevent-quota.sh)
       printf '%s\n' "__script__:fm-procevent-quota.test.sh"
       ;;
     bin/fm-quota-choose.sh)
       printf '%s\n' "__script__:fm-quota-choose.test.sh"
+      ;;
+    bin/fm-dispatch-resolve.sh)
+      printf '%s\n' "__script__:fm-dispatch-resolve.test.sh"
+      ;;
+    bin/fm-env-lib.sh)
+      # The one .env accessor, sourced by bin/fm-x-lib.sh (Relay token) and
+      # bin/fm-dispatch-resolve.sh (TYPESAFE_API_KEY).
+      printf '%s\n' pr-forge
+      printf '%s\n' "__script__:fm-dispatch-resolve.test.sh"
       ;;
     bin/fm-sessionstart-run.sh|.claude/settings.json|.codex/hooks.json|\
     .pi/extensions/fm-primary-turnend-guard.ts)
