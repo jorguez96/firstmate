@@ -2,6 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { encodeFirstmateOperationalInput } from "./lib/fm-operational-input.js";
+import { bindV1Plugin } from "./lib/fm-v2-plugin.js";
 
 const COORDINATOR_KEY = "__firstmateOpenCodeWatchArm";
 // 35s on Windows so the budget stays above arm's MSYS confirm default (30s in
@@ -492,4 +493,11 @@ export const FmPrimaryWatchArm = async ({ client, directory, worktree }) => {
       void ensureArm(paths, sessionID, client);
     },
   };
+};
+
+export default {
+  id: "firstmate.watch-arm",
+  setup(ctx) {
+    return bindV1Plugin(ctx, FmPrimaryWatchArm);
+  },
 };

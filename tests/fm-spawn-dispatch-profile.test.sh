@@ -692,12 +692,14 @@ test_opencode_threads_model_and_ignores_effort_axis() {
   expect_code 0 "$status" "opencode spawn with model and ignored effort should succeed"
   assert_meta_profile "$HOME_DIR/state/$id.meta" opencode anthropic/claude-sonnet-4-5 high
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "opencode --model 'anthropic/claude-sonnet-4-5' --prompt" \
-    "opencode launch did not thread model"
+  assert_contains "$launch" "opencode mini --model 'anthropic/claude-sonnet-4-5' --prompt" \
+    "opencode launch did not thread model on mini"
+  assert_not_contains "$launch" "opencode --model" "opencode launch must not pass --model to the top-level command"
+  assert_not_contains "$launch" "opencode run" "opencode launch must stay on the interactive mini client"
   assert_not_contains "$launch" "--effort" "opencode launch must not pass unsupported --effort"
   assert_not_contains "$launch" "--variant" "opencode launch must not pass run-only --variant"
   assert_not_contains "$launch" "--thinking" "opencode launch must not pass pi thinking flag"
-  pass "opencode receives --model and omits the unsupported effort axis"
+  pass "opencode mini receives --model and omits the unsupported effort axis"
 }
 
 test_native_effort_validator_keeps_axes_separate() {
