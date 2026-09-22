@@ -1,6 +1,7 @@
 # OpenCode
 
 Verified on 2026-06-11 across versions 1.15.7 through 1.17.6, with busy-queue behavior re-verified on 2026-07-20 using 1.18.4.
+Model placement was re-verified on 2026-09-21 with OpenCode 2.0.12: the top-level `opencode` command rejects `--model`, and the interactive launch is `opencode mini`.
 
 ## Operating facts
 
@@ -10,9 +11,9 @@ Verified on 2026-06-11 across versions 1.15.7 through 1.17.6, with busy-queue be
 | Exit command | `/exit`. |
 | Interrupt | Double Escape; it is known to be flaky while a long shell command runs, so use `../../../bin/fm-control.sh <task-id> relaunch` for a wedged pane. |
 | Skill invocation | No separate verified form beyond normal slash-command behavior; use natural language when the exact command is uncertain. |
-| Resume | Relaunch with `--continue` to resume the most recent session for the current directory, then send the next instruction after the TUI is ready because `--prompt` does not auto-submit alongside `--continue`. |
-| Model flag | `--model <provider/model>`. |
-| Effort flag | None for Firstmate's interactive `opencode --prompt` launch verified on 1.17.6; `opencode run` has `--variant`, but that is not this path. |
+| Resume | Use `opencode mini --continue`, which 2.0.12 accepts, for the most recent session in the current directory, then send the next instruction after the client is ready. |
+| Model flag | `--model <provider/model>` on `opencode mini`. The top-level `opencode` command rejects `--model` (verified 2.0.12). |
+| Effort flag | None for Firstmate's interactive `opencode mini --prompt` launch verified on 2.0.12; `opencode run` has `--variant`, but that is not this path. |
 | Model discovery | Run `opencode models [provider]` to list available provider/model identifiers. |
 | Trust dialog | None. |
 | Marker | None; OpenCode publishes no identity marker, so `../../../bin/fm-harness.sh` identifies it from process ancestry. |
