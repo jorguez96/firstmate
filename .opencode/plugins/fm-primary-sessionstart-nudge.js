@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
+import { bindV1Plugin } from "./lib/fm-v2-plugin.js";
 
 const handledSessions = new Set();
 
@@ -57,4 +58,11 @@ export const FmPrimarySessionstartNudge = async ({ client, directory, worktree }
       }
     },
   };
+};
+
+export default {
+  id: "firstmate.sessionstart-nudge",
+  setup(ctx) {
+    return bindV1Plugin(ctx, FmPrimarySessionstartNudge);
+  },
 };
