@@ -1714,7 +1714,14 @@ launch_template() {
       printf '%s' 'codex __MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals-and-sandbox --disable hooks -c "notify=[\"bash\",\"-c\",\"touch __TURNEND__\"]" "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
     fi
     ;;
-  opencode) printf '%s' 'OPENCODE_CONFIG_CONTENT='\''{"permission":{"*":"allow"}}'\'' opencode __MODELFLAG__--prompt "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+  # OpenCode 2's root CLI accepts --prompt but rejects --model (Unrecognized
+  # flag: --model, verified on 2.0.12), so workers launch through `mini`,
+  # the minimal interactive interface, which accepts --model/-m as
+  # provider/model plus --prompt (verified via `opencode mini --help`).
+  # mini honors OPENCODE_CONFIG_CONTENT's permission allow with no --auto
+  # flag: a live mini 2.0.12 probe ran a file write plus a shell command
+  # with zero permission prompts, so the launch stays fully approval-free.
+  opencode) printf '%s' 'OPENCODE_CONFIG_CONTENT='\''{"permission":{"*":"allow"}}'\'' opencode mini __MODELFLAG__--prompt "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
   pi | pi-signed)
     printf '%s' '__PIBIN____PITUIMODE__'
     if [ "$kind" = secondmate ]; then
@@ -2268,7 +2275,7 @@ effort_flag_for_harness() {
     # --config-override, but that flag is single-value (see
     # rovo_config_override_flag below) so it is built there, merged with the
     # mandatory allowedExternalPaths grant, rather than here.
-    # opencode's interactive `opencode --prompt` launch has a verified --model
+    # opencode's interactive `opencode mini --prompt` launch has a verified --model
     # flag but no verified effort flag. Its `opencode run --variant` flag belongs
     # to a different, non-interactive launch mode, so fm-spawn does not pass it.
     # kimi likewise has no reasoning-effort flag; the requested axis stays in
