@@ -1990,8 +1990,18 @@ contribution_tasks_json() {
 
 if [ "$OUTPUT_MODE" = contribution-input ]; then
   # Reuse the canonical backlog parser, without observing workers or other homes.
+  # Stage both documents through files: once the backlog archive grows they exceed
+  # the per-argument size limit and --argjson fails with "Argument list too long".
   contribution_tasks=$(contribution_tasks_json) || { echo "fm-fleet-snapshot: contribution task read failed" >&2; exit 1; }
-  jq -n --argjson backlog "$BACKLOG_JSON" --argjson tasks "$contribution_tasks" '{backlog:$backlog,tasks:$tasks}'
+  contribution_input_dir=$(mktemp -d "${TMPDIR:-/tmp}/fm-fleet-snapshot-contrib.XXXXXX") \
+    || { echo "fm-fleet-snapshot: temporary contribution file creation failed" >&2; exit 1; }
+  printf '%s\n' "$BACKLOG_JSON" > "$contribution_input_dir/backlog.json" \
+    || { echo "fm-fleet-snapshot: temporary contribution backlog write failed" >&2; exit 1; }
+  printf '%s\n' "$contribution_tasks" > "$contribution_input_dir/tasks.json" \
+    || { echo "fm-fleet-snapshot: temporary contribution task write failed" >&2; exit 1; }
+  jq -n --slurpfile backlog "$contribution_input_dir/backlog.json" --slurpfile tasks "$contribution_input_dir/tasks.json" '{backlog:$backlog[0],tasks:$tasks[0]}' \
+    || { echo "fm-fleet-snapshot: contribution input assembly failed" >&2; exit 1; }
+  rm -rf "$contribution_input_dir"
   exit 0
 fi
 prefetch_task_current_states || { echo "fm-fleet-snapshot: task observation failed" >&2; exit 1; }
