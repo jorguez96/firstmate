@@ -78,6 +78,13 @@ FM_BACKLOG_CLOSE_REPLAY_RESULT=
 # library does not source fm-tasks-axi-lib.sh does not apply.
 # shellcheck source=bin/fm-timeout-lib.sh disable=SC1091
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-timeout-lib.sh"
+# fm-pr-lib.sh owns which URL is a Gerrit change. It is functions and empty
+# globals only, so it is sourced once rather than re-initialising a caller's
+# parsed identity.
+if ! declare -F fm_pr_url_parse >/dev/null 2>&1; then
+  # shellcheck source=bin/fm-pr-lib.sh disable=SC1091
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-pr-lib.sh"
+fi
 
 # Latched when a row read hits its bound. fm_backlog_row_show runs inside a
 # command substitution, so the subshell can READ this latch but cannot set it;
@@ -509,10 +516,134 @@ fm_backlog_start() {  # <data-dir> <id>
   fm_backlog_mutate "$1" start "$2"
 }
 
+# tasks-axi takes a --pr link only as a canonical GitHub or Forgejo pull request
+# and refuses anything else, so a Gerrit change URL is recorded on the row as a
+# note instead. The subshell keeps the parse from overwriting a caller's
+# FM_PR_* identity.
+fm_backlog_pr_is_gerrit_change() {  # <url>
+  ( fm_pr_url_parse "$1" && [ "$FM_PR_PROVIDER" = gerrit ] )
+}
+
 fm_backlog_done() {  # <data-dir> <id> [flag...]
-  local data=$1 id=$2
+  local data=$1 id=$2 arg previous_arg=''
+  local -a done_args=()
   shift 2
-  fm_backlog_mutate "$data" "done" "$id" "$@"
+  for arg in "$@"; do
+    if [ "$previous_arg" = --pr ] && fm_backlog_pr_is_gerrit_change "$arg"; then
+      done_args[${#done_args[@]}-1]=--note
+      done_args+=("Gerrit change $arg")
+    else
+      done_args+=("$arg")
+    fi
+    previous_arg=$arg
+  done
+  fm_backlog_mutate "$data" "done" "$id" "${done_args[@]+"${done_args[@]}"}"
+}
+
+fm_backlog_row_artifact_supported() {
+  local id=$1 flag=${2:-} value=${3:-}
+  case "$flag" in
+    --pr) ! fm_backlog_pr_is_gerrit_change "$value" ;;
+    --report) [ "$value" = "data/$id/report.md" ] ;;
+    *) return 1 ;;
+  esac
+}
+
+# Keep a captain-held row open across the removal of the work record that
+# discovered it: record the finished work's deliverable as one line at the end
+# of the task body (a line already present is left alone), preserve supported
+# artifacts on the row, and return it to Queued, the conventional post-cleanup
+# shape for an open captain call.
+# bin/fm-fleet-snapshot.sh classifies that retained hold from its structured
+# fields; only bin/fm-captain-hold.sh answer resolves the call.
+fm_backlog_retain() {  # <data-dir> <id> [flag...]
+  local data authorized_data=$1 id=$2 out command_status previous_arg=''
+  local arg deliverable='' line body new_body tmp
+  local -a row_args=()
+  if ! data=$(fm_backlog_data_absolute "$1"); then
+    FM_BACKLOG_TRANSITION_ERROR="data directory cannot be resolved: $1"
+    return 1
+  fi
+  shift 2
+  FM_BACKLOG_TRANSITION_ERROR=
+  for arg in "$@"; do
+    case "$previous_arg" in
+      --report)
+        deliverable="${deliverable:+$deliverable; }report $arg"
+        if fm_backlog_row_artifact_supported "$id" --report "$arg"; then
+          row_args=(--report "$arg")
+        fi
+        ;;
+      --pr)
+        if fm_backlog_row_artifact_supported "$id" --pr "$arg"; then
+          deliverable="${deliverable:+$deliverable; }PR $arg"
+          row_args=(--pr "$arg")
+        else
+          deliverable="${deliverable:+$deliverable; }Gerrit change $arg"
+        fi
+        ;;
+      --note) deliverable="${deliverable:+$deliverable; }$arg" ;;
+    esac
+    previous_arg=$arg
+  done
+  if [ -n "$deliverable" ]; then
+    out=$(fm_backlog_row_show "$data" "$id" --full)
+    command_status=$?
+    [ "$command_status" -ne 124 ] || FM_BACKLOG_ROW_SHOW_WEDGED=1
+    if [ "$command_status" -ne 0 ]; then
+      FM_BACKLOG_TRANSITION_ERROR=$(printf '%s\n' "$out" | sed -n '1p')
+      [ -n "$FM_BACKLOG_TRANSITION_ERROR" ] \
+        || FM_BACKLOG_TRANSITION_ERROR="tasks-axi show $id failed with no output"
+      return "$command_status"
+    fi
+    # The leading quote selects a JSON-encoded bare string, which is exactly the
+    # value an older JSON::PP rejects unless allow_nonref is asked for, so the
+    # decoder below requests it rather than inheriting the local default. It then
+    # writes bytes, because printing the decoded characters to a stream with no
+    # :raw layer emits a codepoint at or below U+00FF as one latin-1 byte and
+    # silently corrupts the body this rewrites.
+    body=$(printf '%s\n' "$out" | sed -n 's/^  body: //p' | head -1 \
+      | LC_ALL=C perl -MJSON::PP -e '
+        local $/;
+        my $shown = <STDIN>;
+        $shown =~ s/\s+\z//;
+        exit 0 if $shown eq "" || $shown eq "-";
+        my $value = $shown =~ /\A"/
+          ? JSON::PP->new->utf8->allow_nonref->decode($shown) : $shown;
+        binmode STDOUT, ":raw";
+        utf8::encode($value) if utf8::is_utf8($value);
+        print $value unless $value eq "-";
+      ') || {
+      FM_BACKLOG_TRANSITION_ERROR="could not decode the task body of $id"
+      return 1
+    }
+    line="Deliverable of the finished work: $deliverable"
+    case $'\n'"$body"$'\n' in
+      *$'\n'"$line"$'\n'*) ;;
+      *)
+        new_body=$line
+        [ -z "$body" ] || new_body=$(printf '%s\n\n%s' "$body" "$line")
+        tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-backlog-retain-body.XXXXXX") || {
+          FM_BACKLOG_TRANSITION_ERROR="cannot stage the deliverable for $id"
+          return 1
+        }
+        if ! printf '%s\n' "$new_body" > "$tmp"; then
+          rm -f -- "$tmp"
+          FM_BACKLOG_TRANSITION_ERROR="cannot stage the deliverable for $id"
+          return 1
+        fi
+        if ! fm_backlog_mutate "$authorized_data" update "$id" --body-file "$tmp"; then
+          rm -f -- "$tmp"
+          return 1
+        fi
+        rm -f -- "$tmp"
+        ;;
+    esac
+  fi
+  if [ "${#row_args[@]}" -gt 0 ]; then
+    fm_backlog_mutate "$authorized_data" update "$id" "${row_args[@]}" || return 1
+  fi
+  fm_backlog_mutate "$authorized_data" reopen "$id"
 }
 
 fm_backlog_row_artifact_supported() {

@@ -308,7 +308,7 @@ Treat a public loop as closed only after `retire`.
 - The reply length authority is the relay (it trims), but a tight reply is on you.
 - Never edit `bin/fm-x-poll.sh`, `bin/fm-x-reply.sh`, or the watcher to "answer faster"; the cadence is handled by the locked session-start bootstrap step.
 
-## Relay operating contract moved from AGENTS.md section 14
+## Relay activation and ownership contract
 
 Relay is the public-mention integration older docs and some emitted lines still call "X mode"; its identifiers keep the `FMX_`, `x-`, and `fm-x-` spellings.
 Relay ships inert and causes no behavior change until the home opts in by placing `FMX_PAIRING_TOKEN` in its gitignored `.env`.

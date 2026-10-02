@@ -231,6 +231,8 @@ esac
 . "$SCRIPT_DIR/fm-landed-lib.sh"  # FM_LANDED_JQ_DEFS: the shared landed selector
 # shellcheck source=bin/fm-merge-authority-lib.sh
 . "$SCRIPT_DIR/fm-merge-authority-lib.sh"
+# shellcheck source=bin/fm-hold-reason-lib.sh
+. "$SCRIPT_DIR/fm-hold-reason-lib.sh"
 
 usage() {
   cat <<'EOF'
@@ -383,13 +385,14 @@ first_pr_url_in_file() {  # <file>
   grep -Eo 'https?://[^[:space:])"]+/pull/[0-9]+' "$1" 2>/dev/null | head -1
 }
 
-backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
+backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
   local backlog=${1:-$BACKLOG}
   if [ ! -f "$backlog" ]; then
     jq -n --arg path "$backlog" '{path:$path,present:false,records:[]}'
     return 0
   fi
 
+  set -o pipefail
   # shellcheck disable=SC2094
   jq -Rn --arg path "$backlog" --arg today "$SNAPSHOT_TODAY" --arg now "$SNAPSHOT_NOW" \
     --argjson age_days "$FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS" '
@@ -572,7 +575,173 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
           | .captain_actionable = (.hold_bucket == "live")
         else . end)
     | del(.section,.order)
-  ' < "$backlog"
+  ' < "$backlog" | fm_hold_reason_decode_stream json
+)
+
+SNAPSHOT_TASK_DIR=
+SNAPSHOT_TASK_METAS=()
+SNAPSHOT_TASK_META_COUNT=0
+
+snapshot_task_cleanup() {
+  [ -z "$SNAPSHOT_TASK_DIR" ] || rm -rf -- "$SNAPSHOT_TASK_DIR"
+  SNAPSHOT_TASK_DIR=
+  SNAPSHOT_TASK_METAS=()
+  SNAPSHOT_TASK_META_COUNT=0
+}
+
+snapshot_wait_current_reads() {  # <pid>...
+  local pid rc=0
+  for pid in "$@"; do
+    wait "$pid" || rc=1
+  done
+  return "$rc"
+}
+
+snapshot_capture_optional() {  # <source> <destination>
+  local source=$1 destination=$2
+  [ -f "$source" ] || return 0
+  cp -p -- "$source" "$destination" && return 0
+  # Teardown may remove an optional observation after the existence check.
+  if [ ! -e "$source" ]; then
+    rm -f -- "$destination"
+    return 0
+  fi
+  return 1
+}
+
+snapshot_mark_optional_present() {  # <source> <destination>
+  local source=$1 destination=$2
+  [ -f "$source" ] || return 0
+  : > "$destination"
+}
+
+snapshot_task_generation_is_current() {  # <captured-meta> <id>
+  local captured_meta=$1 id=$2 current_meta captured_gen current_gen captured_contents current_contents
+  current_meta="$STATE/$id.meta"
+  [ -f "$current_meta" ] || return 1
+  captured_gen=$(meta_value "$captured_meta" spawn_gen)
+  if [ -n "$captured_gen" ]; then
+    current_gen=$(meta_value "$current_meta" spawn_gen)
+    [ "$current_gen" = "$captured_gen" ]
+  else
+    # Legacy metadata has no generation token. Exact equality is the strongest
+    # available identity check and still detects ordinary teardown/relaunches.
+    captured_contents=$(<"$captured_meta") || return 1
+    current_contents=$(<"$current_meta") || return 1
+    [ "$current_contents" = "$captured_contents" ]
+  fi
+}
+
+prefetch_task_observations() {  # <meta> <id>
+  local meta=$1 id=$2 remote_host current_file endpoint_file current_pid='' current_rc=0
+  local status_log status_capture report_path report_capture
+  local kind backend target endpoint_exists=null agent_alive=not_checked generation_current=1
+  remote_host=$(meta_value "$meta" remote_host)
+  current_file="$SNAPSHOT_TASK_DIR/$id.json"
+  endpoint_file="$SNAPSHOT_TASK_DIR/$id.endpoint"
+  status_log="$STATE/$id.status"
+  status_capture="$SNAPSHOT_TASK_DIR/$id.status"
+  report_path="$DATA/$id/report.md"
+  report_capture="$SNAPSHOT_TASK_DIR/$id.report"
+
+  snapshot_task_generation_is_current "$meta" "$id" || generation_current=0
+  if [ "$generation_current" = 1 ]; then
+    snapshot_capture_optional "$status_log" "$status_capture" || current_rc=1
+    snapshot_mark_optional_present "$report_path" "$report_capture" || current_rc=1
+  fi
+
+  if [ -n "$remote_host" ]; then
+    jq -n '{state:"unknown",source:"none",detail:"remote endpoint liveness not collected by fleet snapshot",raw:""}' \
+      > "$current_file" || current_rc=1
+    agent_alive=unknown
+  elif [ "$generation_current" = 1 ]; then
+    crew_state_json "$id" "$meta" "$status_capture" > "$current_file" &
+    current_pid=$!
+    kind=$(meta_value "$meta" kind)
+    backend=$(fm_backend_of_meta "$meta")
+    target=$(fm_backend_target_of_meta "$meta")
+    if [ -n "$target" ]; then
+      if fm_backend_target_exists "$backend" "$target" "fm-$id" >/dev/null 2>&1; then
+        endpoint_exists=true
+      else
+        endpoint_exists=false
+      fi
+      if [ "$kind" = secondmate ]; then
+        agent_alive=$(fm_backend_agent_alive "$backend" "$target" 2>/dev/null || printf unknown)
+      fi
+    fi
+  else
+    jq -n '{state:"unknown",source:"none",detail:"task generation changed during snapshot",raw:""}' \
+      > "$current_file" || current_rc=1
+    agent_alive=unknown
+  fi
+
+  [ -z "$current_pid" ] || wait "$current_pid" || current_rc=1
+  # All mutable observations must belong to the metadata generation captured in
+  # the manifest. If teardown/relaunch raced any read, discard the whole sample.
+  if ! snapshot_task_generation_is_current "$meta" "$id"; then
+    rm -f -- "$status_capture" "$report_capture"
+    jq -n '{state:"unknown",source:"none",detail:"task generation changed during snapshot",raw:""}' \
+      > "$current_file" || current_rc=1
+    endpoint_exists=null
+    agent_alive=unknown
+  fi
+  printf 'endpoint_exists=%s\nagent_alive=%s\n' "$endpoint_exists" "$agent_alive" > "$endpoint_file" || current_rc=1
+  return "$current_rc"
+}
+
+# Current-state and endpoint reads are independent observations. Start each
+# task's pair together so five local workers pay one slow no-mistakes response
+# window rather than five in series, while every command bound remains owned by
+# fm-timeout-lib.sh.
+prefetch_task_current_states() {
+  local meta captured_meta id active=0 index=0 rc=0
+  local -a pids=()
+  snapshot_task_cleanup
+  SNAPSHOT_TASK_DIR=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/fm-fleet-tasks.XXXXXX") || return 1
+  # Keep the metadata generation that selected each task beside its observations.
+  # Publishers replace metadata atomically, so copying before workers start gives
+  # composition one coherent task manifest even if publication or teardown races it.
+  for meta in "$STATE"/*.meta; do
+    [ -e "$meta" ] || continue
+    id=$(basename "$meta" .meta)
+    captured_meta="$SNAPSHOT_TASK_DIR/$id.meta"
+    if ! cp -- "$meta" "$captured_meta" 2>"$captured_meta.copy-error"; then
+      # Teardown may unlink a task after the glob selected it but before cp opens
+      # it. That task is no longer in the inventory; other copy failures remain
+      # fatal rather than silently producing a partial snapshot.
+      if [ ! -e "$meta" ]; then
+        rm -f -- "$captured_meta" "$captured_meta.copy-error"
+        continue
+      fi
+      cat "$captured_meta.copy-error" >&2
+      snapshot_task_cleanup
+      return 1
+    fi
+    rm -f -- "$captured_meta.copy-error"
+    SNAPSHOT_TASK_METAS[SNAPSHOT_TASK_META_COUNT]=$captured_meta
+    SNAPSHOT_TASK_META_COUNT=$((SNAPSHOT_TASK_META_COUNT + 1))
+  done
+  while [ "$index" -lt "$SNAPSHOT_TASK_META_COUNT" ]; do
+    meta=${SNAPSHOT_TASK_METAS[index]}
+    id=$(basename "$meta" .meta)
+    prefetch_task_observations "$meta" "$id" &
+    pids[active]=$!
+    active=$((active + 1))
+    index=$((index + 1))
+    if [ "$active" -ge "$FM_SNAPSHOT_LOCAL_READ_CONCURRENCY" ]; then
+      snapshot_wait_current_reads "${pids[@]}" || rc=1
+      pids=()
+      active=0
+    fi
+  done
+  if [ "$active" -gt 0 ]; then
+    snapshot_wait_current_reads "${pids[@]}" || rc=1
+  fi
+  if [ "$rc" -ne 0 ]; then
+    snapshot_task_cleanup
+    return 1
+  fi
 }
 
 SNAPSHOT_TASK_DIR=
@@ -1990,18 +2159,8 @@ contribution_tasks_json() {
 
 if [ "$OUTPUT_MODE" = contribution-input ]; then
   # Reuse the canonical backlog parser, without observing workers or other homes.
-  # Stage both documents through files: once the backlog archive grows they exceed
-  # the per-argument size limit and --argjson fails with "Argument list too long".
   contribution_tasks=$(contribution_tasks_json) || { echo "fm-fleet-snapshot: contribution task read failed" >&2; exit 1; }
-  contribution_input_dir=$(mktemp -d "${TMPDIR:-/tmp}/fm-fleet-snapshot-contrib.XXXXXX") \
-    || { echo "fm-fleet-snapshot: temporary contribution file creation failed" >&2; exit 1; }
-  printf '%s\n' "$BACKLOG_JSON" > "$contribution_input_dir/backlog.json" \
-    || { echo "fm-fleet-snapshot: temporary contribution backlog write failed" >&2; exit 1; }
-  printf '%s\n' "$contribution_tasks" > "$contribution_input_dir/tasks.json" \
-    || { echo "fm-fleet-snapshot: temporary contribution task write failed" >&2; exit 1; }
-  jq -n --slurpfile backlog "$contribution_input_dir/backlog.json" --slurpfile tasks "$contribution_input_dir/tasks.json" '{backlog:$backlog[0],tasks:$tasks[0]}' \
-    || { echo "fm-fleet-snapshot: contribution input assembly failed" >&2; exit 1; }
-  rm -rf "$contribution_input_dir"
+  jq -n --argjson backlog "$BACKLOG_JSON" --argjson tasks "$contribution_tasks" '{backlog:$backlog,tasks:$tasks}'
   exit 0
 fi
 prefetch_task_current_states || { echo "fm-fleet-snapshot: task observation failed" >&2; exit 1; }
